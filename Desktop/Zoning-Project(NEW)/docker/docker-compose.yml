@@ -50,7 +50,7 @@ services:
       DATABASE_URL: postgresql://zoning_user:zoning_password@postgres:5432/zoning_db
 
       # AI Service Configuration (Grok)
-      GROK_API_KEY: xai-QlNLX72BuYjxxE2nhCcsA0cDjZryCWyhEMCXg46GokDOhc20n3sWb8390nzUFXvubBhmumb47eE3L71B
+      GROK_API_KEY: ${GROK_API_KEY}
 
       # Application Settings
       DEBUG: "true"
