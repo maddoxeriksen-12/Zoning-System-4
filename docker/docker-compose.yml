@@ -1,0 +1,123 @@
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: zoning-postgres
+    environment:
+      POSTGRES_DB: zoning_db
+      POSTGRES_USER: zoning_user
+      POSTGRES_PASSWORD: zoning_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../database/schema/01_core_tables.sql:/docker-entrypoint-initdb.d/01_core_tables.sql
+      - ../database/functions/02_rpc_functions.sql:/docker-entrypoint-initdb.d/02_rpc_functions.sql
+      - ../database/policies/03_rls_policies.sql:/docker-entrypoint-initdb.d/03_rls_policies.sql
+      - ../database/data/04_sample_data.sql:/docker-entrypoint-initdb.d/04_sample_data.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zoning_user -d zoning_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - zoning-network
+
+  # Redis for caching and rate limiting
+  redis:
+    image: redis:7-alpine
+    container_name: zoning-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - zoning-network
+
+  # Backend API Service
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/backend.Dockerfile
+    container_name: zoning-backend
+    environment:
+      # Database Configuration (Supabase by default, falls back to local PostgreSQL)
+      DATABASE_URL: ${DATABASE_URL:-postgresql://zoning_user:zoning_password@postgres:5432/zoning_db}
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+
+      # AI Service Configuration (Grok)
+      GROK_API_KEY: ${GROK_API_KEY}
+
+      # Application Settings
+      DEBUG: "true"
+      SECRET_KEY: zoning-project-secret-key-change-in-production-2025
+      CSRF_SECRET_KEY: zoning-csrf-secret-key-change-in-production-2025
+
+      # Rate Limiting Configuration
+      GROK_RATE_LIMIT_REQUESTS: 5
+      GROK_RATE_LIMIT_WINDOW: 3600
+      GROK_RATE_LIMIT_BURST: 1
+
+      # Redis Configuration
+      REDIS_URL: redis://redis:6379
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - zoning-network
+
+  # Frontend Service
+  frontend:
+    build:
+      context: ..
+      dockerfile: docker/frontend.Dockerfile
+    container_name: zoning-frontend
+    ports:
+      - "3002:80"
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - zoning-network
+
+  # Nginx Reverse Proxy
+  nginx:
+    image: nginx:alpine
+    container_name: zoning-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - zoning-network
+
+volumes:
+  postgres_data:
+
+networks:
+  zoning-network:
+    driver: bridge
