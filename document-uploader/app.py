@@ -217,16 +217,21 @@ def upload_file():
             f.write(f"filepath: {filepath}\n")
             f.flush()
 
+        # Send directly to backend (no local file saving needed)
+        # Save file temporarily for backend upload
         file.save(filepath)
-
-        # Debug: check if file was saved
-        with open('/tmp/save_debug.txt', 'a') as f:
-            f.write(f"Saved file to: {filepath}\n")
-            f.write(f"File exists: {os.path.exists(filepath)}\n")
-            f.flush()
-
-        # Send to backend for processing
-        success, result, error_msg = send_to_zoning_backend(filepath, original_name, municipality, county, state)
+        
+        try:
+            # Send to backend for processing
+            success, result, error_msg = send_to_zoning_backend(filepath, original_name, municipality, county, state)
+        finally:
+            # Clean up temporary file after sending to backend
+            try:
+                if os.path.exists(filepath):
+                    os.remove(filepath)
+                    print(f"DEBUG: Cleaned up temporary file: {filepath}")
+            except Exception as e:
+                print(f"DEBUG: Could not clean up {filepath}: {e}")
 
         if success:
             flash(f'✅ File "{original_name}" uploaded successfully! It will be processed for zoning analysis shortly.', 'success')

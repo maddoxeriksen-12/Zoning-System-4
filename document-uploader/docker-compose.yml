@@ -22,27 +22,28 @@ services:
       retries: 3
     restart: unless-stopped
 
-  upload-processor:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: upload-processor
-    volumes:
-      - uploads_data:/app/uploads
-      - processed_data:/app/processed
-    environment:
-      - ZONING_API_URL=http://backend:8000/api/documents/upload
-    command: python process_uploads.py
-    depends_on:
-      - document-uploader
-    networks:
-      - docker_zoning-network
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "echo", "ok"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+  # upload-processor: DISABLED - Causes duplicate processing
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #   container_name: upload-processor
+  #   volumes:
+  #     - uploads_data:/app/uploads
+  #     - processed_data:/app/processed
+  #   environment:
+  #     - ZONING_API_URL=http://backend:8000/api/documents/upload
+  #   command: python process_uploads.py
+  #   depends_on:
+  #     - document-uploader
+  #   networks:
+  #     - docker_zoning-network
+  #   restart: unless-stopped
+  #   healthcheck:
+  #     test: ["CMD", "echo", "ok"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+  # NOTE: Document uploader now sends files directly to backend
 
 networks:
   docker_zoning-network:
