@@ -112,17 +112,9 @@ class RequirementsProcessor:
         
         # Ensure we have a valid town name (NOT NULL constraint)
         if not town or town.lower() == 'unknown':
-            # Try to extract from filename as fallback
-            filename = document_data.get('original_filename', document_data.get('filename', ''))
-            if filename:
-                # Clean filename to use as town identifier
-                import re
-                clean_name = re.sub(r'[^a-zA-Z0-9_-]', '_', filename.split('.')[0])[:30]
-                town = f"Document_{clean_name}"
-                logger.info(f"Using filename-derived town: {town}")
-            else:
-                town = f"Job_{job_id[:8]}"
-                logger.info(f"Using job-derived town: {town}")
+            # IMPORTANT: Don't use filename as town name yet - we'll try to extract from Grok first
+            town = "PENDING_EXTRACTION"  # Temporary placeholder
+            logger.info(f"Town pending extraction from Grok response")
         
         if not county:
             county = "Unknown County"
@@ -219,27 +211,56 @@ class RequirementsProcessor:
                 logger.warning(f"No zones found in Grok response for job {job_id}")
                 return requirement_ids
             
-            # Extract location information from document_data
-            town = document_data.get('municipality', 'Unknown')
-            county = document_data.get('county', '')
-            state = document_data.get('state', 'NJ')
+            # Extract location information with priority: User Input > Grok Extraction > Fallback
+            town = document_data.get('municipality', '').strip()
+            county = document_data.get('county', '').strip()
+            state = document_data.get('state', 'NJ').strip()
             
-            # Use extracted location as fallback if user input is missing
-            if town == 'Unknown' or not town:
+            # Priority 1: Use Grok extracted location if user didn't provide good data
+            if not town or town.lower() in ['unknown', 'pending_extraction']:
                 extracted_town = parsed_data.get('extracted_town')
-                if extracted_town:
-                    town = extracted_town
-                    logger.info(f"Using extracted town '{town}' from Grok response")
+                if extracted_town and extracted_town.strip():
+                    town = extracted_town.strip()
+                    logger.info(f"✅ Using Grok-extracted town: '{town}'")
+                else:
+                    # Fallback to filename-based identifier
+                    filename = document_data.get('original_filename', document_data.get('filename', ''))
+                    if filename:
+                        import re
+                        clean_name = re.sub(r'[^a-zA-Z0-9_-]', '_', filename.split('.')[0])[:20]
+                        town = f"Doc_{clean_name}"
+                        logger.warning(f"⚠️ Fallback to filename-based town: '{town}'")
+                    else:
+                        town = f"Job_{job_id[:8]}"
+                        logger.warning(f"⚠️ Final fallback town: '{town}'")
             
-            if not county:
+            if not county or county == 'Unknown County':
                 extracted_county = parsed_data.get('extracted_county')
-                if extracted_county:
-                    county = extracted_county
-                    logger.info(f"Using extracted county '{county}' from Grok response")
+                if extracted_county and extracted_county.strip():
+                    county = extracted_county.strip()
+                    logger.info(f"✅ Using Grok-extracted county: '{county}'")
+                else:
+                    county = "Unknown County"
             
-            # Process each zone
-            for zone_data in zones:
+            logger.info(f"🏘️ Final location: {town}, {county}, {state}")
+            
+            # Process each zone - ensure unique zones only
+            processed_zones = set()
+            logger.info(f"🔄 Processing {len(zones)} zones for {town}, {county}, {state}")
+            
+            for i, zone_data in enumerate(zones):
                 try:
+                    zone_name = self._extract_zone_name(zone_data)
+                    
+                    # Skip duplicate zones
+                    zone_key = f"{town}_{county}_{state}_{zone_name}".lower()
+                    if zone_key in processed_zones:
+                        logger.info(f"⏭️  Skipping duplicate zone {zone_name}")
+                        continue
+                    processed_zones.add(zone_key)
+                    
+                    logger.info(f"🏗️  Processing zone {i+1}/{len(zones)}: '{zone_name}' with {len([k for k,v in zone_data.items() if v is not None])} non-null fields")
+                    
                     req_id = self._insert_zone_requirements(
                         job_id=job_id,
                         town=town,
@@ -251,7 +272,7 @@ class RequirementsProcessor:
                     
                     if req_id:
                         requirement_ids.append(req_id)
-                        logger.info(f"Created requirement {req_id} for zone {zone_data.get('zone')} in {town}, {state}")
+                        logger.info(f"✅ Created requirement {req_id} for zone '{zone_name}' in {town}, {county}, {state}")
                     
                 except Exception as e:
                     logger.error(f"Error processing zone {zone_data.get('zone')}: {str(e)}")
@@ -380,7 +401,7 @@ class RequirementsProcessor:
                 'town': town,
                 'county': county,
                 'state': state,
-                'zone': zone_data.get('zone', 'Unknown'),
+                'zone': self._extract_zone_name(zone_data),
                 'data_source': 'AI_Extracted',
                 'extraction_confidence': extraction_confidence,
                 
@@ -412,34 +433,49 @@ class RequirementsProcessor:
                 'min_circle_diameter_ft': self._safe_numeric(lot_req.get('min_circle_diameter_ft')),
                 'buildable_lot_area_sqft': self._safe_numeric(lot_req.get('buildable_lot_area_sqft')),
                 
-                # Principal building yards - flexible mapping for setbacks
+                # Principal building yards - match Grok's actual field names
                 'principal_front_yard_ft': self._safe_numeric(
                     self._extract_field_value([principal_yards, zone_data], 
-                    ['front_yard_ft', 'front_setback', 'front_yard_setback_ft', 'front_yard', 'setback_front'])
+                    ['principal_min_front_yard_ft', 'front_yard_ft', 'front_setback', 'principal_front_yard_ft'])
                 ),
                 'principal_side_yard_ft': self._safe_numeric(
                     self._extract_field_value([principal_yards, zone_data], 
-                    ['side_yard_ft', 'side_setback', 'side_yard_setback_ft', 'side_yard', 'setback_side'])
+                    ['principal_min_side_yard_ft', 'side_yard_ft', 'side_setback', 'principal_side_yard_ft'])
                 ),
                 'principal_street_side_yard_ft': self._safe_numeric(
                     self._extract_field_value([principal_yards, zone_data], 
-                    ['street_side_yard_ft', 'street_side_setback', 'street_side_yard_setback_ft'])
+                    ['principal_min_street_side_yard_ft', 'street_side_yard_ft', 'street_side_setback'])
                 ),
                 'principal_rear_yard_ft': self._safe_numeric(
                     self._extract_field_value([principal_yards, zone_data], 
-                    ['rear_yard_ft', 'rear_setback', 'rear_yard_setback_ft', 'rear_yard', 'setback_rear'])
+                    ['principal_min_rear_yard_ft', 'rear_yard_ft', 'rear_setback', 'principal_rear_yard_ft'])
                 ),
                 'principal_street_rear_yard_ft': self._safe_numeric(
                     self._extract_field_value([principal_yards, zone_data], 
-                    ['street_rear_yard_ft', 'street_rear_setback', 'street_rear_yard_setback_ft'])
+                    ['principal_min_street_rear_yard_ft', 'street_rear_yard_ft', 'street_rear_setback'])
                 ),
                 
-                # Accessory building yards
-                'accessory_front_yard_ft': self._safe_numeric(accessory_yards.get('front_yard_ft')),
-                'accessory_side_yard_ft': self._safe_numeric(accessory_yards.get('side_yard_ft')),
-                'accessory_street_side_yard_ft': self._safe_numeric(accessory_yards.get('street_side_yard_ft')),
-                'accessory_rear_yard_ft': self._safe_numeric(accessory_yards.get('rear_yard_ft')),
-                'accessory_street_rear_yard_ft': self._safe_numeric(accessory_yards.get('street_rear_yard_ft')),
+                # Accessory building yards - match Grok's field names
+                'accessory_front_yard_ft': self._safe_numeric(
+                    self._extract_field_value([accessory_yards, zone_data], 
+                    ['accessory_min_front_yard_ft', 'accessory_front_yard_ft', 'front_yard_ft'])
+                ),
+                'accessory_side_yard_ft': self._safe_numeric(
+                    self._extract_field_value([accessory_yards, zone_data], 
+                    ['accessory_min_side_yard_ft', 'accessory_side_yard_ft', 'side_yard_ft'])
+                ),
+                'accessory_street_side_yard_ft': self._safe_numeric(
+                    self._extract_field_value([accessory_yards, zone_data], 
+                    ['accessory_min_street_side_yard_ft', 'accessory_street_side_yard_ft'])
+                ),
+                'accessory_rear_yard_ft': self._safe_numeric(
+                    self._extract_field_value([accessory_yards, zone_data], 
+                    ['accessory_min_rear_yard_ft', 'accessory_rear_yard_ft', 'rear_yard_ft'])
+                ),
+                'accessory_street_rear_yard_ft': self._safe_numeric(
+                    self._extract_field_value([accessory_yards, zone_data], 
+                    ['accessory_min_street_rear_yard_ft', 'accessory_street_rear_yard_ft'])
+                ),
                 
                 # Coverage and height - flexible mapping for common fields
                 'max_building_coverage_percent': self._safe_numeric(
@@ -452,11 +488,11 @@ class RequirementsProcessor:
                 ),
                 'max_height_stories': self._safe_integer(
                     self._extract_field_value([coverage, zone_data], 
-                    ['max_height_stories', 'height_stories', 'max_stories', 'stories', 'floors'])
+                    ['principal_max_height_stories', 'max_height_stories', 'height_stories', 'max_stories'])
                 ),
                 'max_height_feet_total': self._safe_numeric(
                     self._extract_field_value([coverage, zone_data], 
-                    ['max_height_feet', 'max_height_feet_total', 'height_ft', 'maximum_height', 'height'])
+                    ['principal_max_height_feet', 'max_height_feet_total', 'max_height_feet', 'height_ft'])
                 ),
                 
                 # Floor area
@@ -546,3 +582,12 @@ class RequirementsProcessor:
         # This is a basic attempt - in practice, malformed JSON can be very complex to fix
         
         return json_str
+    
+    def _extract_zone_name(self, zone_data: dict) -> str:
+        """Extract zone name with flexible key matching"""
+        possible_zone_keys = ['zone_name', 'zone', 'district', 'zoning_district', 'name']
+        for key in possible_zone_keys:
+            value = zone_data.get(key)
+            if value and str(value).strip():
+                return str(value).strip()
+        return 'Unknown_Zone'
