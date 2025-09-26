@@ -118,8 +118,8 @@ class DocumentProcessor:
                             # Update job status to processing
                             self.requirements_processor.update_job_status(job_id, 'processing', self.grok_service.model)
                             
-                            # Process and store requirements
-                            requirement_ids = self.requirements_processor.process_grok_response(
+                            # Process and store requirements with validation
+                            requirement_ids = self.requirements_processor.process_grok_response_with_validation(
                                 job_id,
                                 grok_result.get('grok_response'),
                                 doc_data

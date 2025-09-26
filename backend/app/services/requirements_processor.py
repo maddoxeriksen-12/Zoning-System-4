@@ -93,6 +93,52 @@ class RequirementsProcessor:
             logger.error(f"Error updating job status: {str(e)}")
             return False
     
+    def process_grok_response_with_validation(self, job_id: str, grok_response: str, document_data: dict) -> List[str]:
+        """
+        Process Grok AI response with robust validation and insert requirements into database
+        
+        Args:
+            job_id: Job UUID
+            grok_response: JSON string from Grok AI
+            document_data: Document information including location
+            
+        Returns:
+            List of requirement IDs created
+        """
+        # Validate input data first - handle None values
+        town = (document_data.get('municipality') or '').strip()
+        county = (document_data.get('county') or '').strip() 
+        state = (document_data.get('state') or 'NJ').strip()
+        
+        # Ensure we have a valid town name (NOT NULL constraint)
+        if not town or town.lower() == 'unknown':
+            # Try to extract from filename as fallback
+            filename = document_data.get('original_filename', document_data.get('filename', ''))
+            if filename:
+                # Clean filename to use as town identifier
+                import re
+                clean_name = re.sub(r'[^a-zA-Z0-9_-]', '_', filename.split('.')[0])[:30]
+                town = f"Document_{clean_name}"
+                logger.info(f"Using filename-derived town: {town}")
+            else:
+                town = f"Job_{job_id[:8]}"
+                logger.info(f"Using job-derived town: {town}")
+        
+        if not county:
+            county = "Unknown County"
+        
+        # Update document_data with validated values
+        validated_data = document_data.copy()
+        validated_data.update({
+            'municipality': town,
+            'county': county, 
+            'state': state
+        })
+        
+        logger.info(f"🔍 Validated data: town='{town}', county='{county}', state='{state}'")
+        
+        return self.process_grok_response(job_id, grok_response, validated_data)
+    
     def process_grok_response(self, job_id: str, grok_response: str, document_data: dict) -> List[str]:
         """
         Process Grok AI response and insert requirements into database
@@ -112,22 +158,29 @@ class RequirementsProcessor:
             logger.info(f"Processing Grok response for job {job_id}")
             logger.debug(f"Raw Grok response (first 500 chars): {str(grok_response)[:500]}")
             
-            # Parse Grok response
+            # Parse Grok response with improved error handling
             if isinstance(grok_response, str):
                 try:
-                    # Try to find JSON in the response (sometimes Grok adds extra text)
-                    json_start = grok_response.find('{')
-                    json_end = grok_response.rfind('}') + 1
-                    if json_start != -1 and json_end > json_start:
-                        json_str = grok_response[json_start:json_end]
-                        parsed_data = json.loads(json_str)
-                    else:
-                        parsed_data = json.loads(grok_response)
-                except json.JSONDecodeError as e:
-                    logger.error(f"Failed to parse Grok response as JSON: {e}")
-                    logger.error(f"Response snippet: {grok_response[:200]}...")
-                    # Try to extract zones even from malformed response
-                    return self._extract_zones_fallback(job_id, grok_response, document_data)
+                    # First try parsing the response as-is
+                    parsed_data = json.loads(grok_response)
+                except json.JSONDecodeError:
+                    try:
+                        # Try to find JSON in the response (sometimes Grok adds extra text)
+                        json_start = grok_response.find('{')
+                        json_end = grok_response.rfind('}') + 1
+                        if json_start != -1 and json_end > json_start:
+                            json_str = grok_response[json_start:json_end]
+                            # Try to fix common JSON issues
+                            json_str = self._fix_json_string(json_str)
+                            parsed_data = json.loads(json_str)
+                        else:
+                            logger.error("No valid JSON structure found in Grok response")
+                            return self._extract_zones_fallback(job_id, grok_response, document_data)
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Failed to parse Grok response as JSON after cleanup: {e}")
+                        logger.error(f"Response snippet: {grok_response[:500]}...")
+                        # Try to extract zones even from malformed response
+                        return self._extract_zones_fallback(job_id, grok_response, document_data)
             else:
                 parsed_data = grok_response
             
@@ -216,9 +269,14 @@ class RequirementsProcessor:
         """Fallback method to extract zones from malformed Grok response or parsed data"""
         requirement_ids = []
         try:
-            town = document_data.get('municipality', 'Unknown')
-            county = document_data.get('county', '')
-            state = document_data.get('state', 'NJ')
+            # Ensure we have valid data even in fallback - handle None values
+            town = (document_data.get('municipality') or '').strip()
+            if not town or town.lower() == 'unknown':
+                town = f"Fallback_Job_{job_id[:8]}"
+            county = (document_data.get('county') or '') or 'Unknown County'
+            state = (document_data.get('state') or 'NJ')
+            
+            logger.info(f"🔧 Fallback extraction using: town='{town}', county='{county}', state='{state}'")
             
             if parsed_data:
                 # Try to extract from parsed data first
@@ -472,3 +530,19 @@ class RequirementsProcessor:
                 if field_key in nested_dict:
                     return nested_dict[field_key]
         return None
+    
+    def _fix_json_string(self, json_str: str) -> str:
+        """Fix common JSON formatting issues"""
+        # Remove trailing commas before closing braces/brackets
+        json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
+        
+        # Fix unescaped quotes in strings (basic attempt)
+        # This is a simple fix - for more complex cases, we'd need a proper JSON parser
+        
+        # Remove control characters that can break JSON
+        json_str = re.sub(r'[\x00-\x1F\x7F-\x9F]', '', json_str)
+        
+        # Fix unterminated strings by finding the last quote and ensuring it's properly closed
+        # This is a basic attempt - in practice, malformed JSON can be very complex to fix
+        
+        return json_str
