@@ -71,8 +71,10 @@ Find ALL districts: R-1, R-2, C-1, C-2, I-1, etc. (look in tables, headings, sch
 
 STEP 3 - REQUIREMENTS (Extract EXACT numbers):
 
-✅ LOT REQUIREMENTS (enhanced accuracy):
-- interior_min_lot_area_sqft: "lot area", "minimum area", "required area" → EXACT number (be precise, check for ranges)
+✅ LOT REQUIREMENTS (enhanced accuracy - CRITICAL PARSING RULES):
+- interior_min_lot_area_sqft: "lot area", "minimum area", "required area" → EXACT number 
+  ⚠️ CRITICAL: Ignore footnote exponents in zone names (R-1¹, R-1², etc.) - they are NOT part of the area value
+  ⚠️ Example: "Zone R-1¹: 5,000 sq ft" → extract 5000, NOT 15000 (ignore the ¹ superscript)
 - interior_min_lot_frontage_ft: "frontage", "street frontage", "minimum frontage" → number
 - interior_min_lot_width_ft: "width", "lot width" → number (if missing, use frontage value)
 - interior_min_lot_depth_ft: "depth", "lot depth" → number (if missing but width exists, use width value)
@@ -105,12 +107,22 @@ COMMON PHRASES: "coverage shall not exceed", "maximum coverage", "coverage ratio
 - maximum_density_units_per_acre: "density", "units per acre" → number
 SEARCH: commercial zones, mixed-use areas, density bonuses, "FAR=" in tables
 
-EXTRACTION EXAMPLES:
-"Zone R-1: 8,000 sq ft, 25 ft setback, 30 ft height, 30% coverage"
-→ {{"zone_name": "R-1", "interior_min_lot_area_sqft": 8000, "principal_min_front_yard_ft": 25, "principal_max_height_feet": 30, "max_lot_coverage_percent": 30}}
+EXTRACTION EXAMPLES (Pay attention to footnote handling):
+"Zone R-1¹: 5,000 sq ft, 25 ft setback, 30 ft height, 30% coverage"
+→ {{"zone_name": "R-1", "interior_min_lot_area_sqft": 5000, "principal_min_front_yard_ft": 25, "principal_max_height_feet": 30, "max_lot_coverage_percent": 30}}
+CRITICAL: Extract 5000, NOT 15000 (ignore the ¹ footnote superscript)
+
+"Zone R-2²: minimum area 8,000 square feet, front setback 30 feet" 
+→ {{"zone_name": "R-2", "interior_min_lot_area_sqft": 8000, "principal_min_front_yard_ft": 30}}
+CRITICAL: Extract R-2 and 8000, ignore the ² footnote completely
 
 "Commercial C-1: FAR 2.0, height 45 feet, building coverage 60%"  
 → {{"zone_name": "C-1", "maximum_far": 2.0, "principal_max_height_feet": 45, "max_building_coverage_percent": 60}}
+
+FOOTNOTE CONTAMINATION PREVENTION:
+- Zone names often have footnotes: R-1¹, R-1², R-1³ (indicating notes/exceptions)
+- These footnotes are NOT part of the numeric values
+- Extract zone as "R-1" (clean), lot area as actual number (not contaminated with footnote digits)
 
 JSON OUTPUT:
 {{

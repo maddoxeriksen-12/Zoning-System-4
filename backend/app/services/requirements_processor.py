@@ -526,13 +526,55 @@ class RequirementsProcessor:
             return None
     
     def _safe_numeric(self, value: Any) -> Optional[float]:
-        """Convert value to float or return None"""
+        """Convert value to float or return None, with footnote exponent cleaning"""
         if value is None or value == 'null':
             return None
         try:
+            # Clean footnote exponents that contaminate numeric values
+            if isinstance(value, str):
+                cleaned_value = self._clean_numeric_footnotes(value)
+                return float(cleaned_value)
             return float(value)
         except (ValueError, TypeError):
             return None
+    
+    def _clean_numeric_footnotes(self, value: str) -> str:
+        """Remove footnote exponents from numeric values"""
+        import re
+        # Remove superscript footnotes that contaminate numbers
+        # Example: "15000" (from R-1¹ + 5000) → should be just "5000"
+        
+        value = str(value).strip()
+        
+        # Remove superscript numbers at the beginning (most common issue)
+        cleaned = re.sub(r'^[¹²³⁴⁵⁶⁷⁸⁹⁰]+', '', value)
+        
+        # Remove superscript numbers anywhere in the string
+        cleaned = re.sub(r'[¹²³⁴⁵⁶⁷⁸⁹⁰]+', '', cleaned)
+        
+        # Remove other footnote indicators
+        cleaned = re.sub(r'\^[0-9]+', '', cleaned)
+        cleaned = re.sub(r'\([0-9]+\)', '', cleaned)
+        
+        # Remove leading digits that might be footnote contamination
+        # If we have a very large number that seems wrong (>100,000 sqft), it might be contaminated
+        try:
+            num_val = float(cleaned.replace(',', ''))
+            if num_val > 100000:  # Unreasonably large lot
+                # Try removing the first digit (common with footnote contamination)
+                if len(cleaned.replace(',', '')) > 4:
+                    potential_clean = cleaned.replace(',', '')[1:]  # Remove first digit
+                    potential_val = float(potential_clean)
+                    if 1000 <= potential_val <= 100000:  # Reasonable lot size
+                        logger.warning(f"Footnote contamination detected: '{value}' → '{potential_clean}' (removed leading digit)")
+                        return potential_clean
+        except:
+            pass
+        
+        if cleaned != value:
+            logger.info(f"Cleaned numeric footnotes: '{value}' → '{cleaned}'")
+        
+        return cleaned
     
     def _safe_integer(self, value: Any) -> Optional[int]:
         """Convert value to integer or return None"""
@@ -575,13 +617,31 @@ class RequirementsProcessor:
         return json_str
     
     def _extract_zone_name(self, zone_data: dict) -> str:
-        """Extract zone name with flexible key matching"""
+        """Extract zone name with flexible key matching and footnote cleaning"""
         possible_zone_keys = ['zone_name', 'zone', 'district', 'zoning_district', 'name']
         for key in possible_zone_keys:
             value = zone_data.get(key)
             if value and str(value).strip():
-                return str(value).strip()
+                zone_name = str(value).strip()
+                # Clean footnote exponents that cause parsing issues
+                zone_name = self._clean_zone_name_footnotes(zone_name)
+                return zone_name
         return 'Unknown_Zone'
+    
+    def _clean_zone_name_footnotes(self, zone_name: str) -> str:
+        """Remove footnote exponents from zone names (R-1¹ → R-1)"""
+        import re
+        # Remove superscript numbers and symbols that indicate footnotes
+        # Pattern matches: ¹ ² ³ ⁴ ⁵ and regular superscripts
+        cleaned = re.sub(r'[¹²³⁴⁵⁶⁷⁸⁹⁰]+', '', zone_name)
+        cleaned = re.sub(r'\^[0-9]+', '', cleaned)  # Remove ^1, ^2 style footnotes
+        cleaned = re.sub(r'\([0-9]+\)', '', cleaned)  # Remove (1), (2) style footnotes
+        cleaned = cleaned.strip()
+        
+        if cleaned != zone_name:
+            logger.info(f"Cleaned zone name: '{zone_name}' → '{cleaned}'")
+        
+        return cleaned
     
     def _get_frontage_with_fallback(self, interior: dict, zone_data: dict) -> float:
         """Get frontage with enhanced field matching"""
