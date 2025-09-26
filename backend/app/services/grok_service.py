@@ -71,18 +71,27 @@ Find ALL districts: R-1, R-2, C-1, C-2, I-1, etc. (look in tables, headings, sch
 
 STEP 3 - REQUIREMENTS (Extract EXACT numbers):
 
-✅ LOT (working well):
-- interior_min_lot_area_sqft: "lot area" → number (remove commas)
-- interior_min_lot_frontage_ft: "frontage" → number
+✅ LOT REQUIREMENTS (enhanced accuracy):
+- interior_min_lot_area_sqft: "lot area", "minimum area", "required area" → EXACT number (be precise, check for ranges)
+- interior_min_lot_frontage_ft: "frontage", "street frontage", "minimum frontage" → number
+- interior_min_lot_width_ft: "width", "lot width" → number (if missing, use frontage value)
+- interior_min_lot_depth_ft: "depth", "lot depth" → number (if missing but width exists, use width value)
 
-✅ SETBACKS (working well):
-- principal_min_front_yard_ft: "front yard/setback" → number
-- principal_min_side_yard_ft: "side yard/setback" → number  
-- principal_min_rear_yard_ft: "rear yard/setback" → number
+✅ PRINCIPAL BUILDING SETBACKS (enhanced):
+- principal_min_front_yard_ft: "front yard", "front setback", "front building line" → number
+- principal_min_side_yard_ft: "side yard", "side setback" → number (use ONE side value, not multiple)
+- principal_min_rear_yard_ft: "rear yard", "rear setback", "back yard" → number
 
-❌ HEIGHT (0% success - FIX THIS):
+🏠 ACCESSORY BUILDING SETBACKS (currently 0% - IMPROVE):
+- accessory_min_front_yard_ft: "accessory front", "garage setback", "shed setback" → number
+- accessory_min_side_yard_ft: "accessory side", "outbuilding side" → number
+- accessory_min_rear_yard_ft: "accessory rear", "outbuilding rear" → number
+SEARCH: accessory building sections, outbuilding regulations, garage requirements, shed rules
+
+🏗️ HEIGHT (improved accuracy needed):
 - principal_max_height_feet: "height", "maximum height", "building height" → EXACT feet
-- principal_max_height_stories: "stories", "floors" → decimal (2.5 for "2½")
+- principal_max_height_stories: "stories", "floors" → PRECISE decimal (2.5 for "2½", 2.5 for "two and one-half", NOT rounded to 2)
+CRITICAL: Convert fractional stories accurately: "2½"→2.5, "2 1/2"→2.5, "two and one-half"→2.5
 SEARCH: height sections, building codes, dimensional tables, "H=" in tables
 
 ❌ COVERAGE (CRITICAL - LOOK EVERYWHERE):

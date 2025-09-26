@@ -405,23 +405,14 @@ class RequirementsProcessor:
                 'data_source': 'AI_Extracted',
                 'extraction_confidence': extraction_confidence,
                 
-                # Interior lots - flexible field mapping
+                # Interior lots - enhanced with fallback logic
                 'interior_min_lot_area_sqft': self._safe_numeric(
                     self._extract_field_value([interior, zone_data], 
-                    ['min_lot_area_sqft', 'interior_min_lot_area_sqft', 'lot_area', 'area_sqft'])
+                    ['min_lot_area_sqft', 'interior_min_lot_area_sqft', 'lot_area', 'area_sqft', 'minimum_area_sqft'])
                 ),
-                'interior_min_lot_frontage_ft': self._safe_numeric(
-                    self._extract_field_value([interior, zone_data], 
-                    ['min_lot_frontage_ft', 'interior_min_lot_frontage_ft', 'frontage', 'frontage_ft'])
-                ),
-                'interior_min_lot_width_ft': self._safe_numeric(
-                    self._extract_field_value([interior, zone_data], 
-                    ['min_lot_width_ft', 'interior_min_lot_width_ft', 'width', 'width_ft'])
-                ),
-                'interior_min_lot_depth_ft': self._safe_numeric(
-                    self._extract_field_value([interior, zone_data], 
-                    ['min_lot_depth_ft', 'interior_min_lot_depth_ft', 'depth', 'depth_ft'])
-                ),
+                'interior_min_lot_frontage_ft': self._get_frontage_with_fallback(interior, zone_data),
+                'interior_min_lot_width_ft': self._get_width_with_frontage_fallback(interior, zone_data),
+                'interior_min_lot_depth_ft': self._get_depth_with_fallback(interior, zone_data),
                 
                 # Corner lots
                 'corner_min_lot_area_sqft': self._safe_numeric(corner.get('min_lot_area_sqft')),
@@ -455,22 +446,22 @@ class RequirementsProcessor:
                     ['principal_min_street_rear_yard_ft', 'street_rear_yard_ft', 'street_rear_setback'])
                 ),
                 
-                # Accessory building yards - match Grok's field names
-                'accessory_front_yard_ft': self._safe_numeric(
-                    self._extract_field_value([accessory_yards, zone_data], 
-                    ['accessory_min_front_yard_ft', 'accessory_front_yard_ft', 'front_yard_ft'])
+                # Accessory building yards - enhanced extraction with fallbacks
+                'accessory_front_yard_ft': self._get_accessory_setback_with_fallback(
+                    accessory_yards, zone_data, 'front', 
+                    ['accessory_min_front_yard_ft', 'accessory_front_yard_ft', 'garage_front_setback', 'outbuilding_front']
                 ),
-                'accessory_side_yard_ft': self._safe_numeric(
-                    self._extract_field_value([accessory_yards, zone_data], 
-                    ['accessory_min_side_yard_ft', 'accessory_side_yard_ft', 'side_yard_ft'])
+                'accessory_side_yard_ft': self._get_accessory_setback_with_fallback(
+                    accessory_yards, zone_data, 'side',
+                    ['accessory_min_side_yard_ft', 'accessory_side_yard_ft', 'garage_side_setback', 'outbuilding_side']
                 ),
                 'accessory_street_side_yard_ft': self._safe_numeric(
                     self._extract_field_value([accessory_yards, zone_data], 
                     ['accessory_min_street_side_yard_ft', 'accessory_street_side_yard_ft'])
                 ),
-                'accessory_rear_yard_ft': self._safe_numeric(
-                    self._extract_field_value([accessory_yards, zone_data], 
-                    ['accessory_min_rear_yard_ft', 'accessory_rear_yard_ft', 'rear_yard_ft'])
+                'accessory_rear_yard_ft': self._get_accessory_setback_with_fallback(
+                    accessory_yards, zone_data, 'rear',
+                    ['accessory_min_rear_yard_ft', 'accessory_rear_yard_ft', 'garage_rear_setback', 'outbuilding_rear']
                 ),
                 'accessory_street_rear_yard_ft': self._safe_numeric(
                     self._extract_field_value([accessory_yards, zone_data], 
@@ -591,3 +582,66 @@ class RequirementsProcessor:
             if value and str(value).strip():
                 return str(value).strip()
         return 'Unknown_Zone'
+    
+    def _get_frontage_with_fallback(self, interior: dict, zone_data: dict) -> float:
+        """Get frontage with enhanced field matching"""
+        return self._safe_numeric(
+            self._extract_field_value([interior, zone_data], 
+            ['min_lot_frontage_ft', 'interior_min_lot_frontage_ft', 'frontage', 'frontage_ft', 'street_frontage'])
+        )
+    
+    def _get_width_with_frontage_fallback(self, interior: dict, zone_data: dict) -> float:
+        """Get width, fallback to frontage if width missing"""
+        width = self._safe_numeric(
+            self._extract_field_value([interior, zone_data], 
+            ['min_lot_width_ft', 'interior_min_lot_width_ft', 'width', 'width_ft', 'lot_width'])
+        )
+        
+        # If width is missing, use frontage as fallback
+        if width is None:
+            frontage = self._get_frontage_with_fallback(interior, zone_data)
+            if frontage is not None:
+                logger.info(f"Using frontage {frontage} as width fallback")
+                return frontage
+        
+        return width
+    
+    def _get_depth_with_fallback(self, interior: dict, zone_data: dict) -> float:
+        """Get depth with width fallback if missing"""
+        depth = self._safe_numeric(
+            self._extract_field_value([interior, zone_data], 
+            ['min_lot_depth_ft', 'interior_min_lot_depth_ft', 'depth', 'depth_ft', 'lot_depth'])
+        )
+        
+        # If depth is missing, try to use width as fallback
+        if depth is None:
+            width = self._get_width_with_frontage_fallback(interior, zone_data)
+            if width is not None:
+                logger.info(f"Using width {width} as depth fallback")
+                return width
+        
+        return depth
+    
+    def _get_accessory_setback_with_fallback(self, accessory_yards: dict, zone_data: dict, setback_type: str, field_keys: list) -> float:
+        """Get accessory setback with fallback to principal setback if missing"""
+        # First try to find specific accessory setback
+        accessory_value = self._safe_numeric(
+            self._extract_field_value([accessory_yards, zone_data], field_keys)
+        )
+        
+        if accessory_value is not None:
+            return accessory_value
+        
+        # Fallback: Use principal building setback (often accessory = principal)
+        principal_field = f'principal_min_{setback_type}_yard_ft'
+        principal_keys = [principal_field, f'{setback_type}_yard_ft', f'{setback_type}_setback']
+        
+        principal_value = self._safe_numeric(
+            self._extract_field_value([zone_data], principal_keys)
+        )
+        
+        if principal_value is not None:
+            logger.info(f"Using principal {setback_type} setback {principal_value} as accessory fallback")
+            return principal_value
+        
+        return None
