@@ -44,6 +44,13 @@ except Exception as e:
     logger.error(f"Failed to import requirements router: {e}")
     requirements_router = None
 
+try:
+    from .api.ab_testing import router as ab_testing_router
+    logger.info("A/B testing router imported successfully")
+except Exception as e:
+    logger.error(f"Failed to import A/B testing router: {e}")
+    ab_testing_router = None
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -118,6 +125,16 @@ if requirements_router:
     logger.info(f"Requirements router included with prefix: /api/requirements")
 else:
     logger.error("Requirements router not available, skipping inclusion")
+
+if ab_testing_router:
+    app.include_router(
+        ab_testing_router,
+        prefix="/api/ab-testing",
+        tags=["A/B Testing"]
+    )
+    logger.info(f"A/B testing router included with prefix: /api/ab-testing")
+else:
+    logger.error("A/B testing router not available, skipping inclusion")
 
 
 @app.get("/health")
