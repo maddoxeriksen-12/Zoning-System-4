@@ -405,10 +405,11 @@ class RequirementsProcessor:
                 'data_source': 'AI_Extracted',
                 'extraction_confidence': extraction_confidence,
                 
-                # Interior lots - enhanced with fallback logic
-                'interior_min_lot_area_sqft': self._safe_numeric(
+                # Interior lots - enhanced with fallback logic and contamination fixing
+                'interior_min_lot_area_sqft': self._fix_contaminated_lot_area(
                     self._extract_field_value([interior, zone_data], 
-                    ['min_lot_area_sqft', 'interior_min_lot_area_sqft', 'lot_area', 'area_sqft', 'minimum_area_sqft'])
+                    ['min_lot_area_sqft', 'interior_min_lot_area_sqft', 'lot_area', 'area_sqft', 'minimum_area_sqft']),
+                    zone_data.get('zone_name', '')
                 ),
                 'interior_min_lot_frontage_ft': self._get_frontage_with_fallback(interior, zone_data),
                 'interior_min_lot_width_ft': self._get_width_with_frontage_fallback(interior, zone_data),
@@ -539,42 +540,59 @@ class RequirementsProcessor:
             return None
     
     def _clean_numeric_footnotes(self, value: str) -> str:
-        """Remove footnote exponents from numeric values"""
+        """Remove footnote exponents from numeric values - AGGRESSIVE CLEANING"""
         import re
-        # Remove superscript footnotes that contaminate numbers
-        # Example: "15000" (from R-1¹ + 5000) → should be just "5000"
         
         value = str(value).strip()
-        
-        # Remove superscript numbers at the beginning (most common issue)
-        cleaned = re.sub(r'^[¹²³⁴⁵⁶⁷⁸⁹⁰]+', '', value)
+        original_value = value
         
         # Remove superscript numbers anywhere in the string
-        cleaned = re.sub(r'[¹²³⁴⁵⁶⁷⁸⁹⁰]+', '', cleaned)
-        
-        # Remove other footnote indicators
+        cleaned = re.sub(r'[¹²³⁴⁵⁶⁷⁸⁹⁰]+', '', value)
         cleaned = re.sub(r'\^[0-9]+', '', cleaned)
         cleaned = re.sub(r'\([0-9]+\)', '', cleaned)
         
-        # Remove leading digits that might be footnote contamination
-        # If we have a very large number that seems wrong (>100,000 sqft), it might be contaminated
+        # AGGRESSIVE: Check for contaminated lot areas
+        # Pattern: Leading digit(s) from footnote + actual area value
         try:
-            num_val = float(cleaned.replace(',', ''))
-            if num_val > 100000:  # Unreasonably large lot
-                # Try removing the first digit (common with footnote contamination)
-                if len(cleaned.replace(',', '')) > 4:
-                    potential_clean = cleaned.replace(',', '')[1:]  # Remove first digit
-                    potential_val = float(potential_clean)
-                    if 1000 <= potential_val <= 100000:  # Reasonable lot size
-                        logger.warning(f"Footnote contamination detected: '{value}' → '{potential_clean}' (removed leading digit)")
-                        return potential_clean
-        except:
-            pass
-        
-        if cleaned != value:
-            logger.info(f"Cleaned numeric footnotes: '{value}' → '{cleaned}'")
-        
-        return cleaned
+            # Remove commas for analysis
+            num_str = cleaned.replace(',', '').replace(' ', '')
+            
+            if num_str.isdigit() and len(num_str) >= 4:
+                num_val = int(num_str)
+                
+                # Common contamination patterns:
+                # 15000 (1 + 5000) → should be 5000
+                # 28000 (2 + 8000) → should be 8000
+                # 312000 (3 + 12000) → should be 12000
+                
+                if num_val > 50000:  # Suspiciously large for most residential lots
+                    # Try removing first digit
+                    if len(num_str) == 5 and num_str[0] in '123456789':  # 5-digit number
+                        candidate = num_str[1:]  # Remove first digit
+                        candidate_val = int(candidate)
+                        if 1000 <= candidate_val <= 50000:  # Reasonable residential lot
+                            logger.warning(f"🔧 FOOTNOTE CONTAMINATION FIXED: {original_value} → {candidate} (removed leading footnote digit)")
+                            return candidate
+                    
+                    # Try removing first 2 digits for extreme cases
+                    elif len(num_str) == 6 and num_str[:2] in ['10', '11', '12', '20', '21', '22', '30', '31', '32']:
+                        candidate = num_str[2:]  # Remove first 2 digits
+                        candidate_val = int(candidate)
+                        if 1000 <= candidate_val <= 50000:
+                            logger.warning(f"🔧 FOOTNOTE CONTAMINATION FIXED: {original_value} → {candidate} (removed leading footnote digits)")
+                            return candidate
+                
+                # Common valid large lots (don't "fix" these)
+                elif 50000 <= num_val <= 200000:  # Large but reasonable lots
+                    return cleaned
+            
+            return cleaned
+            
+        except (ValueError, TypeError):
+            # If not a clean number, return as-is
+            if cleaned != original_value:
+                logger.info(f"Cleaned footnotes: '{original_value}' → '{cleaned}'")
+            return cleaned
     
     def _safe_integer(self, value: Any) -> Optional[int]:
         """Convert value to integer or return None"""
@@ -705,3 +723,85 @@ class RequirementsProcessor:
             return principal_value
         
         return None
+    
+    def _fix_contaminated_lot_area(self, lot_area_value: Any, zone_name: str) -> Optional[float]:
+        """Fix lot area values contaminated with zone footnote exponents - AGGRESSIVE VERSION"""
+        if lot_area_value is None:
+            return None
+        
+        try:
+            # First apply standard numeric cleaning
+            cleaned_area = self._safe_numeric(lot_area_value)
+            
+            if cleaned_area is None:
+                return None
+            
+            # AGGRESSIVE CONTAMINATION DETECTION
+            # Common patterns: 15000→5000, 28000→8000, 312000→12000
+            area_str = str(int(cleaned_area))
+            
+            # Pattern 1: Check if it's exactly 15000, 28000, 312000 etc (common contaminations)
+            contamination_patterns = {
+                15000: 5000,   # R-1¹ + 5000
+                28000: 8000,   # R-2² + 8000
+                312000: 12000, # R-3³ + 12000
+                110000: 10000, # R-1¹ + 10000
+                115000: 15000, # R-1¹ + 15000 (but keep as 15000)
+                27500: 7500,   # R-2² + 7500
+                36000: 6000,   # R-3³ + 6000
+            }
+            
+            if cleaned_area in contamination_patterns:
+                fixed_value = contamination_patterns[cleaned_area]
+                logger.warning(f"🔧 KNOWN CONTAMINATION FIXED: {cleaned_area} → {fixed_value} (common pattern for zone {zone_name})")
+                return float(fixed_value)
+            
+            # Pattern 2: If starts with 1,2,3 and is 5 digits, likely contaminated
+            if len(area_str) == 5 and area_str[0] in '123':
+                candidate = int(area_str[1:])
+                if 3000 <= candidate <= 20000:  # Common residential lot sizes
+                    logger.warning(f"🔧 PATTERN CONTAMINATION FIXED: {cleaned_area} → {candidate} (removed leading {area_str[0]} from zone {zone_name})")
+                    return float(candidate)
+            
+            # Pattern 3: Check zone name for footnotes
+            import re
+            zone_clean = self._clean_zone_name_footnotes(zone_name)
+            
+            # Extract potential footnote number from zone name
+            footnote_match = re.search(r'[¹²³⁴⁵⁶⁷⁸⁹]', zone_name)
+            if not footnote_match:
+                # Also check for R-1, R-2, R-3 patterns
+                if 'R-1' in zone_name or 'R1' in zone_name:
+                    footnote_digit = '1'
+                elif 'R-2' in zone_name or 'R2' in zone_name:
+                    footnote_digit = '2'
+                elif 'R-3' in zone_name or 'R3' in zone_name:
+                    footnote_digit = '3'
+                else:
+                    footnote_digit = None
+            else:
+                superscript_map = {'¹': '1', '²': '2', '³': '3', '⁴': '4', '⁵': '5', 
+                                 '⁶': '6', '⁷': '7', '⁸': '8', '⁹': '9'}
+                footnote_digit = superscript_map.get(footnote_match.group(0))
+            
+            if footnote_digit and area_str.startswith(footnote_digit):
+                candidate_area_str = area_str[len(footnote_digit):]
+                if candidate_area_str:
+                    candidate_area = int(candidate_area_str)
+                    if 1000 <= candidate_area <= 50000:
+                        logger.warning(f"🔧 ZONE FOOTNOTE FIXED: {cleaned_area} → {candidate_area} (removed {footnote_digit} from zone {zone_name})")
+                        return float(candidate_area)
+            
+            # Pattern 4: General heuristic - if unreasonably large, try removing first digit
+            if cleaned_area > 100000:
+                if len(area_str) > 4:
+                    candidate = int(area_str[1:])
+                    if 1000 <= candidate <= 50000:
+                        logger.warning(f"🔧 HEURISTIC FIXED: {cleaned_area} → {candidate} (too large, removed first digit)")
+                        return float(candidate)
+            
+            return cleaned_area
+            
+        except Exception as e:
+            logger.error(f"Error fixing contaminated lot area: {e}")
+            return self._safe_numeric(lot_area_value)

@@ -51,9 +51,15 @@ class GrokService:
             if county:
                 location_info += f", {county}"
             location_info += f", {state}"
-
+            
             prompt = f"""
 You are an expert zoning analyst. Extract ALL zoning requirements with MAXIMUM PRECISION.
+
+⚠️⚠️⚠️ CRITICAL BUG TO AVOID ⚠️⚠️⚠️
+NEVER COMBINE ZONE FOOTNOTES WITH LOT AREAS!
+- Zone "R-1¹" with area "5,000 sq ft" → MUST output 5000 NOT 15000
+- Zone "R-2²" with area "8,000 sq ft" → MUST output 8000 NOT 28000
+- The superscript ¹²³ is NEVER part of the area number!
 
 Document Text:
 {text_content[:10000]}
@@ -68,13 +74,17 @@ Find: {municipality if municipality else 'SEARCH_DOCUMENT'}, {county if county e
 
 STEP 2 - ZONES:
 Find ALL districts: R-1, R-2, C-1, C-2, I-1, etc. (look in tables, headings, schedules)
+⚠️ REMOVE all superscripts/footnotes from zone names: R-1¹ → R-1
 
 STEP 3 - REQUIREMENTS (Extract EXACT numbers):
 
-✅ LOT REQUIREMENTS (enhanced accuracy - CRITICAL PARSING RULES):
-- interior_min_lot_area_sqft: "lot area", "minimum area", "required area" → EXACT number 
-  ⚠️ CRITICAL: Ignore footnote exponents in zone names (R-1¹, R-1², etc.) - they are NOT part of the area value
-  ⚠️ Example: "Zone R-1¹: 5,000 sq ft" → extract 5000, NOT 15000 (ignore the ¹ superscript)
+✅ LOT REQUIREMENTS (CRITICAL: Fix exponent contamination):
+- interior_min_lot_area_sqft: "lot area", "minimum area", "required area" → EXACT number ONLY
+  🚨 CRITICAL BUG FIX: Zone footnotes (¹²³) are contaminating lot area values
+  🚨 "Zone R-1¹: 5,000 sq ft" MUST extract 5000, NOT 15000
+  🚨 "Zone R-2²: 8,000 sq ft" MUST extract 8000, NOT 28000  
+  🚨 IGNORE ALL SUPERSCRIPT NUMBERS: ¹²³⁴⁵⁶⁷⁸⁹⁰
+  🚨 Extract ONLY the actual square footage number, completely ignore zone footnotes
 - interior_min_lot_frontage_ft: "frontage", "street frontage", "minimum frontage" → number
 - interior_min_lot_width_ft: "width", "lot width" → number (if missing, use frontage value)
 - interior_min_lot_depth_ft: "depth", "lot depth" → number (if missing but width exists, use width value)
@@ -107,22 +117,35 @@ COMMON PHRASES: "coverage shall not exceed", "maximum coverage", "coverage ratio
 - maximum_density_units_per_acre: "density", "units per acre" → number
 SEARCH: commercial zones, mixed-use areas, density bonuses, "FAR=" in tables
 
-EXTRACTION EXAMPLES (Pay attention to footnote handling):
-"Zone R-1¹: 5,000 sq ft, 25 ft setback, 30 ft height, 30% coverage"
-→ {{"zone_name": "R-1", "interior_min_lot_area_sqft": 5000, "principal_min_front_yard_ft": 25, "principal_max_height_feet": 30, "max_lot_coverage_percent": 30}}
-CRITICAL: Extract 5000, NOT 15000 (ignore the ¹ footnote superscript)
+⚠️ EXTRACTION EXAMPLES - PAY CLOSE ATTENTION TO LOT AREAS:
 
-"Zone R-2²: minimum area 8,000 square feet, front setback 30 feet" 
-→ {{"zone_name": "R-2", "interior_min_lot_area_sqft": 8000, "principal_min_front_yard_ft": 30}}
-CRITICAL: Extract R-2 and 8000, ignore the ² footnote completely
+INPUT: "Zone R-1¹: 5,000 sq ft, 25 ft setback"
+✅ CORRECT: {{"zone_name": "R-1", "interior_min_lot_area_sqft": 5000}}
+❌ WRONG: {{"zone_name": "R-1", "interior_min_lot_area_sqft": 15000}} ← DO NOT ADD FOOTNOTE TO AREA!
 
-"Commercial C-1: FAR 2.0, height 45 feet, building coverage 60%"  
-→ {{"zone_name": "C-1", "maximum_far": 2.0, "principal_max_height_feet": 45, "max_building_coverage_percent": 60}}
+INPUT: "Zone R-2²: minimum area 8,000 square feet" 
+✅ CORRECT: {{"zone_name": "R-2", "interior_min_lot_area_sqft": 8000}}
+❌ WRONG: {{"zone_name": "R-2", "interior_min_lot_area_sqft": 28000}} ← DO NOT ADD FOOTNOTE TO AREA!
 
-FOOTNOTE CONTAMINATION PREVENTION:
-- Zone names often have footnotes: R-1¹, R-1², R-1³ (indicating notes/exceptions)
-- These footnotes are NOT part of the numeric values
-- Extract zone as "R-1" (clean), lot area as actual number (not contaminated with footnote digits)
+INPUT: "Zone R-3³: 12,000 sf minimum lot"
+✅ CORRECT: {{"zone_name": "R-3", "interior_min_lot_area_sqft": 12000}}
+❌ WRONG: {{"zone_name": "R-3", "interior_min_lot_area_sqft": 312000}} ← DO NOT ADD FOOTNOTE TO AREA!
+
+🚨 FOOTNOTE CONTAMINATION PREVENTION (CRITICAL):
+PROBLEM: Zone footnotes are contaminating lot area values
+- "Zone R-1¹: 5,000 sq ft" being extracted as 15000 instead of 5000
+- "Zone R-2²: 8,000 sq ft" being extracted as 28000 instead of 8000
+
+SOLUTION: Extract numeric values SEPARATELY from zone names
+- Zone name: "R-1¹" → clean to "R-1"  
+- Lot area: "5,000 sq ft" → extract 5000 (ignore any zone footnotes)
+- DO NOT concatenate zone footnote numbers with area values
+
+EXTRACTION PROCESS:
+1. Identify zone: "R-1¹" → record as "R-1"
+2. Find area: "5,000 square feet" → extract 5000
+3. NEVER combine: zone footnote (1) + area (5000) = 15000 ❌
+4. Always separate: zone="R-1", area=5000 ✅
 
 JSON OUTPUT:
 {{
