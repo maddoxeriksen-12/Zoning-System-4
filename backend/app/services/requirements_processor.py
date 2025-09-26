@@ -304,77 +304,136 @@ class RequirementsProcessor:
             Requirement ID if created successfully
         """
         try:
-            # Extract all fields from zone data
-            interior = zone_data.get('interior_lots', {})
-            corner = zone_data.get('corner_lots', {})
-            lot_req = zone_data.get('lot_requirements', {})
-            principal_yards = zone_data.get('principal_building_yards', {})
-            accessory_yards = zone_data.get('accessory_building_yards', {})
-            coverage = zone_data.get('coverage_and_height', {})
-            floor_area = zone_data.get('floor_area', {})
-            intensity = zone_data.get('development_intensity', {})
+            # Extract all fields from zone data with flexible key mapping
+            # Handle various possible JSON structures from Grok
+            interior = self._get_nested_dict(zone_data, ['interior_lots', 'interior', 'interior_lot'])
+            corner = self._get_nested_dict(zone_data, ['corner_lots', 'corner', 'corner_lot'])
+            lot_req = self._get_nested_dict(zone_data, ['lot_requirements', 'additional_lot_requirements', 'lot_req'])
+            principal_yards = self._get_nested_dict(zone_data, ['principal_building_yards', 'principal_yards', 'main_building_yards'])
+            accessory_yards = self._get_nested_dict(zone_data, ['accessory_building_yards', 'accessory_yards', 'accessory'])
+            coverage = self._get_nested_dict(zone_data, ['coverage_and_height', 'coverage', 'building_requirements'])
+            floor_area = self._get_nested_dict(zone_data, ['floor_area', 'floor_requirements', 'area_requirements'])
+            intensity = self._get_nested_dict(zone_data, ['development_intensity', 'intensity', 'density'])
             
-            # Call the Supabase function to insert requirement
-            # Using renamed function to avoid overloading issues
-            result = self.client.rpc('insert_zoning_requirement', {
-                'p_job_id': job_id,
-                'p_town': town,
-                'p_county': county,
-                'p_state': state,
-                'p_zone': zone_data.get('zone', 'Unknown'),
-                'p_data_source': 'AI_Extracted',
-                'p_extraction_confidence': extraction_confidence,
+            # Direct table insertion - bypass RPC function complexity
+            # Build the requirement record
+            requirement_data = {
+                'job_id': job_id,
+                'town': town,
+                'county': county,
+                'state': state,
+                'zone': zone_data.get('zone', 'Unknown'),
+                'data_source': 'AI_Extracted',
+                'extraction_confidence': extraction_confidence,
                 
-                # Interior lots
-                'p_interior_min_lot_area_sqft': self._safe_numeric(interior.get('min_lot_area_sqft')),
-                'p_interior_min_lot_frontage_ft': self._safe_numeric(interior.get('min_lot_frontage_ft')),
-                'p_interior_min_lot_width_ft': self._safe_numeric(interior.get('min_lot_width_ft')),
-                'p_interior_min_lot_depth_ft': self._safe_numeric(interior.get('min_lot_depth_ft')),
+                # Interior lots - flexible field mapping
+                'interior_min_lot_area_sqft': self._safe_numeric(
+                    self._extract_field_value([interior, zone_data], 
+                    ['min_lot_area_sqft', 'interior_min_lot_area_sqft', 'lot_area', 'area_sqft'])
+                ),
+                'interior_min_lot_frontage_ft': self._safe_numeric(
+                    self._extract_field_value([interior, zone_data], 
+                    ['min_lot_frontage_ft', 'interior_min_lot_frontage_ft', 'frontage', 'frontage_ft'])
+                ),
+                'interior_min_lot_width_ft': self._safe_numeric(
+                    self._extract_field_value([interior, zone_data], 
+                    ['min_lot_width_ft', 'interior_min_lot_width_ft', 'width', 'width_ft'])
+                ),
+                'interior_min_lot_depth_ft': self._safe_numeric(
+                    self._extract_field_value([interior, zone_data], 
+                    ['min_lot_depth_ft', 'interior_min_lot_depth_ft', 'depth', 'depth_ft'])
+                ),
                 
                 # Corner lots
-                'p_corner_min_lot_area_sqft': self._safe_numeric(corner.get('min_lot_area_sqft')),
-                'p_corner_min_lot_frontage_ft': self._safe_numeric(corner.get('min_lot_frontage_ft')),
-                'p_corner_min_lot_width_ft': self._safe_numeric(corner.get('min_lot_width_ft')),
-                'p_corner_min_lot_depth_ft': self._safe_numeric(corner.get('min_lot_depth_ft')),
+                'corner_min_lot_area_sqft': self._safe_numeric(corner.get('min_lot_area_sqft')),
+                'corner_min_lot_frontage_ft': self._safe_numeric(corner.get('min_lot_frontage_ft')),
+                'corner_min_lot_width_ft': self._safe_numeric(corner.get('min_lot_width_ft')),
+                'corner_min_lot_depth_ft': self._safe_numeric(corner.get('min_lot_depth_ft')),
                 
                 # Other lot requirements
-                'p_min_circle_diameter_ft': self._safe_numeric(lot_req.get('min_circle_diameter_ft')),
-                'p_buildable_lot_area_sqft': self._safe_numeric(lot_req.get('buildable_lot_area_sqft')),
+                'min_circle_diameter_ft': self._safe_numeric(lot_req.get('min_circle_diameter_ft')),
+                'buildable_lot_area_sqft': self._safe_numeric(lot_req.get('buildable_lot_area_sqft')),
                 
-                # Principal building yards
-                'p_principal_front_yard_ft': self._safe_numeric(principal_yards.get('front_yard_ft')),
-                'p_principal_side_yard_ft': self._safe_numeric(principal_yards.get('side_yard_ft')),
-                'p_principal_street_side_yard_ft': self._safe_numeric(principal_yards.get('street_side_yard_ft')),
-                'p_principal_rear_yard_ft': self._safe_numeric(principal_yards.get('rear_yard_ft')),
-                'p_principal_street_rear_yard_ft': self._safe_numeric(principal_yards.get('street_rear_yard_ft')),
+                # Principal building yards - flexible mapping for setbacks
+                'principal_front_yard_ft': self._safe_numeric(
+                    self._extract_field_value([principal_yards, zone_data], 
+                    ['front_yard_ft', 'front_setback', 'front_yard_setback_ft', 'front_yard', 'setback_front'])
+                ),
+                'principal_side_yard_ft': self._safe_numeric(
+                    self._extract_field_value([principal_yards, zone_data], 
+                    ['side_yard_ft', 'side_setback', 'side_yard_setback_ft', 'side_yard', 'setback_side'])
+                ),
+                'principal_street_side_yard_ft': self._safe_numeric(
+                    self._extract_field_value([principal_yards, zone_data], 
+                    ['street_side_yard_ft', 'street_side_setback', 'street_side_yard_setback_ft'])
+                ),
+                'principal_rear_yard_ft': self._safe_numeric(
+                    self._extract_field_value([principal_yards, zone_data], 
+                    ['rear_yard_ft', 'rear_setback', 'rear_yard_setback_ft', 'rear_yard', 'setback_rear'])
+                ),
+                'principal_street_rear_yard_ft': self._safe_numeric(
+                    self._extract_field_value([principal_yards, zone_data], 
+                    ['street_rear_yard_ft', 'street_rear_setback', 'street_rear_yard_setback_ft'])
+                ),
                 
                 # Accessory building yards
-                'p_accessory_front_yard_ft': self._safe_numeric(accessory_yards.get('front_yard_ft')),
-                'p_accessory_side_yard_ft': self._safe_numeric(accessory_yards.get('side_yard_ft')),
-                'p_accessory_street_side_yard_ft': self._safe_numeric(accessory_yards.get('street_side_yard_ft')),
-                'p_accessory_rear_yard_ft': self._safe_numeric(accessory_yards.get('rear_yard_ft')),
-                'p_accessory_street_rear_yard_ft': self._safe_numeric(accessory_yards.get('street_rear_yard_ft')),
+                'accessory_front_yard_ft': self._safe_numeric(accessory_yards.get('front_yard_ft')),
+                'accessory_side_yard_ft': self._safe_numeric(accessory_yards.get('side_yard_ft')),
+                'accessory_street_side_yard_ft': self._safe_numeric(accessory_yards.get('street_side_yard_ft')),
+                'accessory_rear_yard_ft': self._safe_numeric(accessory_yards.get('rear_yard_ft')),
+                'accessory_street_rear_yard_ft': self._safe_numeric(accessory_yards.get('street_rear_yard_ft')),
                 
-                # Coverage and height
-                'p_max_building_coverage_percent': self._safe_numeric(coverage.get('max_building_coverage_percent')),
-                'p_max_lot_coverage_percent': self._safe_numeric(coverage.get('max_lot_coverage_percent')),
-                'p_max_height_stories': self._safe_integer(coverage.get('max_height_stories')),
-                'p_max_height_feet_total': self._safe_numeric(coverage.get('max_height_feet')),
+                # Coverage and height - flexible mapping for common fields
+                'max_building_coverage_percent': self._safe_numeric(
+                    self._extract_field_value([coverage, zone_data], 
+                    ['max_building_coverage_percent', 'building_coverage', 'coverage_percent', 'max_coverage'])
+                ),
+                'max_lot_coverage_percent': self._safe_numeric(
+                    self._extract_field_value([coverage, zone_data], 
+                    ['max_lot_coverage_percent', 'lot_coverage', 'max_lot_coverage', 'coverage'])
+                ),
+                'max_height_stories': self._safe_integer(
+                    self._extract_field_value([coverage, zone_data], 
+                    ['max_height_stories', 'height_stories', 'max_stories', 'stories', 'floors'])
+                ),
+                'max_height_feet_total': self._safe_numeric(
+                    self._extract_field_value([coverage, zone_data], 
+                    ['max_height_feet', 'max_height_feet_total', 'height_ft', 'maximum_height', 'height'])
+                ),
                 
                 # Floor area
-                'p_min_gross_floor_area_first_floor_sqft': self._safe_numeric(floor_area.get('min_gross_floor_area_first_floor_sqft')),
-                'p_min_gross_floor_area_multistory_sqft': self._safe_numeric(floor_area.get('min_gross_floor_area_multistory_sqft')),
-                'p_max_gross_floor_area_all_structures_sqft': self._safe_numeric(floor_area.get('max_gross_floor_area_all_structures_sqft')),
+                'min_gross_floor_area_first_floor_sqft': self._safe_numeric(floor_area.get('min_gross_floor_area_first_floor_sqft')),
+                'min_gross_floor_area_multistory_sqft': self._safe_numeric(floor_area.get('min_gross_floor_area_multistory_sqft')),
+                'max_gross_floor_area_all_structures_sqft': self._safe_numeric(floor_area.get('max_gross_floor_area_all_structures_sqft')),
                 
-                # Development intensity
-                'p_maximum_far': self._safe_numeric(intensity.get('maximum_far')),
-                'p_maximum_density_units_per_acre': self._safe_numeric(intensity.get('maximum_density_units_per_acre'))
-            }).execute()
+                # Development intensity - flexible mapping for FAR and density
+                'maximum_far': self._safe_numeric(
+                    self._extract_field_value([intensity, zone_data], 
+                    ['maximum_far', 'max_far', 'far', 'floor_area_ratio', 'maximum_floor_area_ratio'])
+                ),
+                'maximum_density_units_per_acre': self._safe_numeric(
+                    self._extract_field_value([intensity, zone_data], 
+                    ['maximum_density_units_per_acre', 'max_density', 'density', 'units_per_acre'])
+                ),
+                
+                # Timestamps
+                'extracted_at': datetime.utcnow().isoformat(),
+                'created_at': datetime.utcnow().isoformat(),
+                'updated_at': datetime.utcnow().isoformat()
+            }
             
-            if result.data:
-                return result.data
+            # Use upsert to handle conflicts (update existing records for same town/county/state/zone)
+            result = self.client.table('requirements').upsert(
+                requirement_data,
+                on_conflict='town,county,state,zone'
+            ).execute()
+            
+            if result.data and len(result.data) > 0:
+                requirement_id = result.data[0].get('id')
+                logger.info(f"Successfully inserted/updated requirement {requirement_id} for zone {zone_data.get('zone')} in {town}, {state}")
+                return requirement_id
             else:
-                logger.error("Failed to insert requirement: No data returned")
+                logger.error("Failed to insert requirement: No data returned from upsert")
                 return None
                 
         except Exception as e:
@@ -398,3 +457,18 @@ class RequirementsProcessor:
             return int(value)
         except (ValueError, TypeError):
             return None
+    
+    def _get_nested_dict(self, data: dict, possible_keys: list) -> dict:
+        """Get nested dictionary using flexible key lookup"""
+        for key in possible_keys:
+            if key in data and isinstance(data[key], dict):
+                return data[key]
+        return {}
+    
+    def _extract_field_value(self, nested_dicts: list, field_keys: list) -> Any:
+        """Extract field value from multiple possible locations"""
+        for nested_dict in nested_dicts:
+            for field_key in field_keys:
+                if field_key in nested_dict:
+                    return nested_dict[field_key]
+        return None
