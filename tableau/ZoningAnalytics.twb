@@ -1,0 +1,220 @@
+<?xml version='1.0' encoding='utf-8' ?>
+
+<!-- Tableau Workbook Template for Zoning A/B Testing Analytics -->
+<workbook original-version='18.1' source-build='20181.18.0906.1222' source-platform='mac' version='18.1' xmlns:user='http://www.tableausoftware.com/xml/user'>
+  <document-format-change-manifest>
+    <IntuitiveSorting />
+    <IntuitiveSorting_SP2 />
+    <SheetIdentifierTracking ignorable='true' predowngraded='true' />
+    <WindowsPersistSimpleIdentifiers />
+  </document-format-change-manifest>
+  <preferences>
+    <preference name='ui.encoding.shelf.height' value='24' />
+    <preference name='ui.shelf.height' value='26' />
+  </preferences>
+  <datasources>
+    <datasource caption='Prompt Performance' inline='true' name='federated.1234567' version='18.1'>
+      <connection class='federated'>
+        <named-connections>
+          <named-connection caption='prompt_performance' name='textscan.1234567'>
+            <connection class='textscan' directory='[DOWNLOAD_PATH]' filename='prompt_performance.csv' password='' server='' />
+          </named-connection>
+        </named-connections>
+        <relation connection='textscan.1234567' name='prompt_performance.csv' table='[prompt_performance#csv]' type='table'>
+          <columns character-set='UTF-8' header='yes' locale='en_US' separator=','>
+            <column datatype='string' name='prompt_name' ordinal='0' />
+            <column datatype='string' name='prompt_version' ordinal='1' />
+            <column datatype='string' name='llm_model' ordinal='2' />
+            <column datatype='integer' name='total_tests' ordinal='3' />
+            <column datatype='integer' name='successful_extractions' ordinal='4' />
+            <column datatype='integer' name='failed_extractions' ordinal='5' />
+            <column datatype='real' name='average_accuracy_score' ordinal='6' />
+            <column datatype='real' name='average_field_accuracy' ordinal='7' />
+            <column datatype='real' name='average_zone_accuracy' ordinal='8' />
+            <column datatype='real' name='success_rate' ordinal='9' />
+            <column datatype='boolean' name='is_baseline' ordinal='10' />
+            <column datatype='boolean' name='is_active' ordinal='11' />
+            <column datatype='datetime' name='created_at' ordinal='12' />
+            <column datatype='datetime' name='last_tested_at' ordinal='13' />
+          </columns>
+        </relation>
+        <metadata-records>
+          <metadata-record class='capability'>
+            <remote-name />
+            <remote-type>0</remote-type>
+            <parent-name>[prompt_performance.csv]</parent-name>
+            <remote-alias />
+            <aggregation>Count</aggregation>
+            <contains-null>true</contains-null>
+            <attributes>
+              <attribute datatype='string' name='character-set'><![CDATA[UTF-8]]></attribute>
+              <attribute datatype='string' name='collation'><![CDATA[en_US]]></attribute>
+              <attribute datatype='string' name='field-delimiter'><![CDATA[,]]></attribute>
+              <attribute datatype='string' name='header-row'><![CDATA[true]]></attribute>
+              <attribute datatype='string' name='locale'><![CDATA[en_US]]></attribute>
+              <attribute datatype='string' name='single-char'><![CDATA[&quot;]]></attribute>
+            </attributes>
+          </metadata-record>
+        </metadata-records>
+      </connection>
+      <column datatype='string' name='[prompt_name]' role='dimension' type='nominal' />
+      <column datatype='string' name='[prompt_version]' role='dimension' type='nominal' />
+      <column datatype='string' name='[llm_model]' role='dimension' type='nominal' />
+      <column datatype='integer' name='[total_tests]' role='measure' type='quantitative' />
+      <column datatype='real' name='[average_accuracy_score]' role='measure' type='quantitative' />
+      <column datatype='real' name='[success_rate]' role='measure' type='quantitative' />
+      <column datatype='boolean' name='[is_baseline]' role='dimension' type='nominal' />
+    </datasource>
+    
+    <datasource caption='Requirements Data' inline='true' name='federated.5678901' version='18.1'>
+      <connection class='federated'>
+        <named-connections>
+          <named-connection caption='requirements_data' name='textscan.5678901'>
+            <connection class='textscan' directory='[DOWNLOAD_PATH]' filename='requirements_data.csv' password='' server='' />
+          </named-connection>
+        </named-connections>
+        <relation connection='textscan.5678901' name='requirements_data.csv' table='[requirements_data#csv]' type='table'>
+          <columns character-set='UTF-8' header='yes' locale='en_US' separator=','>
+            <column datatype='string' name='town' ordinal='2' />
+            <column datatype='string' name='county' ordinal='3' />
+            <column datatype='string' name='state' ordinal='4' />
+            <column datatype='string' name='zone' ordinal='5' />
+            <column datatype='real' name='interior_min_lot_area_sqft' ordinal='7' />
+            <column datatype='real' name='principal_front_yard_ft' ordinal='9' />
+            <column datatype='real' name='max_height_feet_total' ordinal='15' />
+            <column datatype='real' name='maximum_far' ordinal='16' />
+            <column datatype='real' name='extraction_confidence' ordinal='17' />
+            <column datatype='datetime' name='created_at' ordinal='18' />
+          </columns>
+        </relation>
+      </connection>
+      <column datatype='string' name='[town]' role='dimension' semantic-role='[State.Region]' type='nominal' />
+      <column datatype='string' name='[county]' role='dimension' semantic-role='[State.Region]' type='nominal' />
+      <column datatype='string' name='[zone]' role='dimension' type='nominal' />
+      <column datatype='real' name='[interior_min_lot_area_sqft]' role='measure' type='quantitative' />
+      <column datatype='real' name='[principal_front_yard_ft]' role='measure' type='quantitative' />
+      <column datatype='real' name='[extraction_confidence]' role='measure' type='quantitative' />
+    </datasource>
+  </datasources>
+  
+  <worksheets>
+    <worksheet name='Prompt Performance Ranking'>
+      <table>
+        <view>
+          <datasource caption='Prompt Performance' name='federated.1234567' />
+          <filter class='categorical' column='[federated.1234567].[is_active]'>
+            <groupfilter function='member' level='[is_active]' member='true' />
+          </filter>
+          <slices>
+            <column>[federated.1234567].[is_active]</column>
+          </slices>
+          <aggregation value='true' />
+        </view>
+        <style />
+        <panes>
+          <pane selection-relaxation-option='selection-relaxation-allow'>
+            <view>
+              <breakdown value='auto' />
+            </view>
+            <mark class='Automatic' />
+            <encodings>
+              <row column='[federated.1234567].[prompt_name]' />
+              <column column='[federated.1234567].[average_accuracy_score]' />
+              <color column='[federated.1234567].[is_baseline]' />
+              <size column='[federated.1234567].[total_tests]' />
+            </encodings>
+            <style>
+              <style-rule element='mark'>
+                <encoding attr='color' field='[federated.1234567].[is_baseline]' type='palette'>
+                  <map to='#1f77b4'>
+                    <bucket>false</bucket>
+                  </map>
+                  <map to='#ff7f0e'>
+                    <bucket>true</bucket>
+                  </map>
+                </encoding>
+              </style-rule>
+            </style>
+          </pane>
+        </panes>
+        <rows>[federated.1234567].[prompt_name]</rows>
+        <cols>[federated.1234567].[average_accuracy_score]</cols>
+      </table>
+      <simple-id uuid='{AAAA1111-BBBB-CCCC-DDDD-EEEEEEEEEEEE}' />
+    </worksheet>
+    
+    <worksheet name='Zone Distribution by Location'>
+      <table>
+        <view>
+          <datasource caption='Requirements Data' name='federated.5678901' />
+          <aggregation value='true' />
+        </view>
+        <style />
+        <panes>
+          <pane selection-relaxation-option='selection-relaxation-allow'>
+            <view>
+              <breakdown value='auto' />
+            </view>
+            <mark class='Automatic' />
+            <encodings>
+              <row column='[federated.5678901].[town]' />
+              <column column='[federated.5678901].[zone]' />
+              <color column='[federated.5678901].[extraction_confidence]' />
+              <size column='[federated.5678901].[interior_min_lot_area_sqft]' />
+            </encodings>
+          </pane>
+        </panes>
+        <rows>[federated.5678901].[town]</rows>
+        <cols>[federated.5678901].[zone]</cols>
+      </table>
+      <simple-id uuid='{BBBB2222-CCCC-DDDD-EEEE-FFFFFFFFFFFF}' />
+    </worksheet>
+  </worksheets>
+  
+  <dashboards>
+    <dashboard name='Zoning A/B Testing Dashboard'>
+      <style />
+      <size maxheight='800' maxwidth='1200' minheight='800' minwidth='1200' />
+      <zones>
+        <zone h='100000' id='1' type='layout-basic' w='100000' x='0' y='0'>
+          <zone h='98000' id='2' type='layout-basic' w='100000' x='0' y='1000'>
+            <zone h='48000' id='3' param='[federated.1234567].[prompt_name]' type='filter' w='20000' x='0' y='0' />
+            <zone h='48000' id='4' param='[federated.1234567].[llm_model]' type='filter' w='20000' x='20000' y='0' />
+            <zone h='48000' id='5' name='Prompt Performance Ranking' w='60000' x='40000' y='0' />
+            <zone h='50000' id='6' name='Zone Distribution by Location' w='100000' x='0' y='48000' />
+          </zone>
+        </zone>
+      </zones>
+    </dashboard>
+  </dashboards>
+  
+  <windows saved-dpi-scale-factor='1.5' source-height='44'>
+    <window class='worksheet' maximized='true' name='Prompt Performance Ranking'>
+      <cards>
+        <edge name='left'>
+          <strip size='160'>
+            <card type='pages' />
+            <card type='filters' />
+            <card type='marks' />
+          </strip>
+        </edge>
+        <edge name='top'>
+          <strip size='2147483647'>
+            <card type='columns' />
+          </strip>
+          <strip size='2147483647'>
+            <card type='rows' />
+          </strip>
+          <strip size='31'>
+            <card type='title' />
+          </strip>
+        </edge>
+      </cards>
+      <simple-id uuid='{AAAA1111-BBBB-CCCC-DDDD-EEEEEEEEEEEE}' />
+    </window>
+    <window class='dashboard' name='Zoning A/B Testing Dashboard'>
+      <viewpoints />
+      <simple-id uuid='{CCCC3333-DDDD-EEEE-FFFF-000000000000}' />
+    </window>
+  </windows>
+</workbook>

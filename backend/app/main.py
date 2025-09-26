@@ -51,6 +51,13 @@ except Exception as e:
     logger.error(f"Failed to import A/B testing router: {e}")
     ab_testing_router = None
 
+try:
+    from .api.tableau_analytics_simple import router as tableau_router
+    logger.info("Tableau analytics router imported successfully")
+except Exception as e:
+    logger.error(f"Failed to import Tableau analytics router: {e}")
+    tableau_router = None
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -135,6 +142,16 @@ if ab_testing_router:
     logger.info(f"A/B testing router included with prefix: /api/ab-testing")
 else:
     logger.error("A/B testing router not available, skipping inclusion")
+
+if tableau_router:
+    app.include_router(
+        tableau_router,
+        prefix="/api/tableau",
+        tags=["Tableau Analytics"]
+    )
+    logger.info(f"Tableau analytics router included with prefix: /api/tableau")
+else:
+    logger.error("Tableau analytics router not available, skipping inclusion")
 
 
 @app.get("/health")
