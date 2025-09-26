@@ -21,7 +21,7 @@ def ensure_dirs():
     os.makedirs(PROCESSED_DIR, exist_ok=True)
     os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-def process_file(filepath):
+def process_file(filepath, retry_count=0):
     """Process a single file and send to backend"""
     try:
         filename = os.path.basename(filepath)
@@ -29,9 +29,10 @@ def process_file(filepath):
         # Extract municipality from filename if possible (format: original_name_uuid.pdf)
         # For now, use a default municipality
         municipality = "Unknown"
+        county = ""  # Add county field
         state = "NJ"
 
-        print(f"Processing file: {filename}")
+        print(f"Processing file: {filename} (retry #{retry_count})")
 
         # Send to backend
         try:
@@ -39,10 +40,12 @@ def process_file(filepath):
                 files = {'file': (filename, f, 'application/pdf')}
                 data = {
                     'municipality': municipality,
+                    'county': county,
                     'state': state
                 }
 
-                response = requests.post(ZONING_API_URL, files=files, data=data, timeout=60)
+                # Increase timeout for large PDFs (5 minutes)
+                response = requests.post(ZONING_API_URL, files=files, data=data, timeout=300)
 
                 print(f"Response status: {response.status_code}")
                 print(f"Response headers: {response.headers}")
@@ -69,6 +72,8 @@ def main():
     print("Starting upload processor...")
 
     processed_files = set()
+    retry_counts = {}  # Track retry attempts per file
+    MAX_RETRIES = 3
 
     while True:
         try:
@@ -84,8 +89,20 @@ def main():
 
                     if file_str not in processed_files:
                         print(f"Found new file: {file_path}")
+                        
+                        # Get retry count for this file
+                        retry_count = retry_counts.get(file_str, 0)
+                        
+                        # Skip if max retries exceeded
+                        if retry_count >= MAX_RETRIES:
+                            print(f"⚠️ Max retries ({MAX_RETRIES}) exceeded for {file_path.name}, marking as processed to skip")
+                            processed_files.add(file_str)
+                            # Move to a failed directory or keep with a .failed suffix
+                            failed_path = file_path.with_suffix(file_path.suffix + '.failed')
+                            shutil.move(str(file_path), str(failed_path))
+                            continue
 
-                        result = process_file(file_str)
+                        result = process_file(file_str, retry_count)
                         print(f"process_file returned: {result}")
 
                         if result:
@@ -95,12 +112,16 @@ def main():
                                 print(f"About to move {file_path} to {processed_path}")
                                 shutil.move(str(file_path), str(processed_path))
                                 processed_files.add(file_str)
+                                # Clear retry count on success
+                                if file_str in retry_counts:
+                                    del retry_counts[file_str]
                                 print(f"Moved {file_path.name} to processed directory")
                             except Exception as e:
                                 print(f"Error moving file: {e}")
                         else:
-                            # Keep in uploads for retry
-                            print(f"Keeping {file_path.name} for retry")
+                            # Increment retry count
+                            retry_counts[file_str] = retry_count + 1
+                            print(f"Keeping {file_path.name} for retry (attempt {retry_counts[file_str]}/{MAX_RETRIES})")
 
             time.sleep(5)  # Check every 5 seconds
 

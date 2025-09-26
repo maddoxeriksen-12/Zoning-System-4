@@ -291,3 +291,4 @@ credentials/
 .local
 dev.db
 test.db
+*.env

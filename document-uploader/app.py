@@ -36,7 +36,7 @@ MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
 
 # Zoning Backend Configuration
 ZONING_BACKEND_URL = os.getenv('ZONING_BACKEND_URL', 'http://host.docker.internal:8000')
-ZONING_API_UPLOAD_ENDPOINT = f"{ZONING_BACKEND_URL}/api/upload"
+ZONING_API_UPLOAD_ENDPOINT = 'http://backend:8000/api/documents/upload'  # Fixed endpoint path
 
 print(f"DEBUG: ZONING_BACKEND_URL = {ZONING_BACKEND_URL}")
 print(f"DEBUG: ZONING_API_UPLOAD_ENDPOINT = {ZONING_API_UPLOAD_ENDPOINT}")

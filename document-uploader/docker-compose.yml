@@ -12,16 +12,15 @@ services:
       - uploads_data:/app/uploads
     environment:
       - FLASK_ENV=production
-      - ZONING_BACKEND_URL=http://host.docker.internal:8000
+      - ZONING_BACKEND_URL=http://backend:8000
+    networks:
+      - docker_zoning-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
     restart: unless-stopped
-    # Allow access to host network for zoning backend
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
 
   upload-processor:
     build:
@@ -32,18 +31,22 @@ services:
       - uploads_data:/app/uploads
       - processed_data:/app/processed
     environment:
-      - ZONING_API_URL=http://host.docker.internal:8000/api/documents/upload
+      - ZONING_API_URL=http://backend:8000/api/documents/upload
     command: python process_uploads.py
     depends_on:
       - document-uploader
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    networks:
+      - docker_zoning-network
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "echo", "ok"]
       interval: 30s
       timeout: 10s
       retries: 3
+
+networks:
+  docker_zoning-network:
+    external: true
 
 volumes:
   uploads_data:

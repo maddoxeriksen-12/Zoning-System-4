@@ -32,6 +32,18 @@ class RequirementsProcessor:
             county = document_data.get('county', '')
             state = document_data.get('state', 'NJ')
             
+            # If town is Unknown, use filename as unique identifier to avoid conflicts
+            if town == 'Unknown' or not town:
+                # Extract a unique identifier from filename
+                filename = document_data.get('original_filename', document_data.get('filename', ''))
+                if filename:
+                    # Use first part of filename as town identifier
+                    town = f"Unknown_{filename[:30].replace('.', '_')}"
+                else:
+                    # Use timestamp to make it unique
+                    import time
+                    town = f"Unknown_{int(time.time())}"
+            
             # Call the Supabase function to create job
             result = self.client.rpc('create_job', {
                 'p_town': town,
@@ -96,28 +108,81 @@ class RequirementsProcessor:
         requirement_ids = []
         
         try:
+            # Log the raw response for debugging
+            logger.info(f"Processing Grok response for job {job_id}")
+            logger.debug(f"Raw Grok response (first 500 chars): {str(grok_response)[:500]}")
+            
             # Parse Grok response
             if isinstance(grok_response, str):
                 try:
-                    parsed_data = json.loads(grok_response)
-                except json.JSONDecodeError:
-                    logger.error("Failed to parse Grok response as JSON")
-                    return requirement_ids
+                    # Try to find JSON in the response (sometimes Grok adds extra text)
+                    json_start = grok_response.find('{')
+                    json_end = grok_response.rfind('}') + 1
+                    if json_start != -1 and json_end > json_start:
+                        json_str = grok_response[json_start:json_end]
+                        parsed_data = json.loads(json_str)
+                    else:
+                        parsed_data = json.loads(grok_response)
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse Grok response as JSON: {e}")
+                    logger.error(f"Response snippet: {grok_response[:200]}...")
+                    # Try to extract zones even from malformed response
+                    return self._extract_zones_fallback(job_id, grok_response, document_data)
             else:
                 parsed_data = grok_response
             
-            # Extract location information
-            town = document_data.get('municipality', 'Unknown')
-            county = document_data.get('county', '')
-            state = document_data.get('state', 'NJ')
+            # Handle wrapped structures like {"raw_response": "{actual json}"}
+            if isinstance(parsed_data, dict) and 'raw_response' in parsed_data:
+                raw_str = parsed_data['raw_response']
+                if isinstance(raw_str, str):
+                    try:
+                        parsed_data = json.loads(raw_str)
+                        logger.info("Successfully parsed nested raw_response JSON")
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Failed to parse raw_response: {e}")
+                        return self._extract_zones_fallback(job_id, grok_response, document_data)
+
+            # Flexible zone key lookup
+            zones = []
+            possible_zone_keys = ['zones', 'zoning_requirements', 'requirements', 'extracted_zones', 'districts']
+            for key in possible_zone_keys:
+                if key in parsed_data:
+                    zones = parsed_data[key]
+                    logger.info(f"Found zones using key '{key}': {len(zones)} zones")
+                    break
             
-            # Get zones from parsed data
-            zones = parsed_data.get('zones', [])
+            if not zones and isinstance(parsed_data, dict):
+                # Look for any list that looks like zones
+                for key, value in parsed_data.items():
+                    if isinstance(value, list) and len(value) > 0 and isinstance(value[0], dict):
+                        if any(k in value[0] for k in ['zone', 'district', 'zoning', 'Zone']):
+                            zones = value
+                            logger.info(f"Found zones using fallback key '{key}': {len(zones)} zones")
+                            break
+
             extraction_confidence = parsed_data.get('extraction_confidence', 0.7)
             
             if not zones:
                 logger.warning(f"No zones found in Grok response for job {job_id}")
                 return requirement_ids
+            
+            # Extract location information from document_data
+            town = document_data.get('municipality', 'Unknown')
+            county = document_data.get('county', '')
+            state = document_data.get('state', 'NJ')
+            
+            # Use extracted location as fallback if user input is missing
+            if town == 'Unknown' or not town:
+                extracted_town = parsed_data.get('extracted_town')
+                if extracted_town:
+                    town = extracted_town
+                    logger.info(f"Using extracted town '{town}' from Grok response")
+            
+            if not county:
+                extracted_county = parsed_data.get('extracted_county')
+                if extracted_county:
+                    county = extracted_county
+                    logger.info(f"Using extracted county '{county}' from Grok response")
             
             # Process each zone
             for zone_data in zones:
@@ -143,6 +208,83 @@ class RequirementsProcessor:
             
         except Exception as e:
             logger.error(f"Error processing Grok response: {str(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return requirement_ids
+    
+    def _extract_zones_fallback(self, job_id: str, grok_response: str, document_data: dict, parsed_data: Optional[Dict] = None) -> List[str]:
+        """Fallback method to extract zones from malformed Grok response or parsed data"""
+        requirement_ids = []
+        try:
+            town = document_data.get('municipality', 'Unknown')
+            county = document_data.get('county', '')
+            state = document_data.get('state', 'NJ')
+            
+            if parsed_data:
+                # Try to extract from parsed data first
+                zones = []
+                possible_keys = ['zones', 'zoning_requirements', 'requirements']
+                for key in possible_keys:
+                    if key in parsed_data:
+                        zones = parsed_data[key]
+                        break
+                if zones:
+                    logger.info(f"Fallback extraction from parsed_data found {len(zones)} zones")
+                    # Process zones as normal
+                    for zone_data in zones:
+                        try:
+                            req_id = self._insert_zone_requirements(
+                                job_id=job_id,
+                                town=town,
+                                county=county,
+                                state=state,
+                                zone_data=zone_data,
+                                extraction_confidence=0.5
+                            )
+                            if req_id:
+                                requirement_ids.append(req_id)
+                        except Exception as e:
+                            logger.error(f"Error in fallback processing: {e}")
+                    return requirement_ids
+            
+            # Original regex fallback if no parsed data
+            import re
+            
+            zone_patterns = [
+                r'(?:zone|district)[:\s]*([A-Z0-9\-]+)',
+                r'([A-Z]{1,2}-\d+)',
+                r'([RC]-\d+)'
+            ]
+            
+            zones_found = set()
+            for pattern in zone_patterns:
+                matches = re.findall(pattern, grok_response, re.IGNORECASE)
+                zones_found.update(matches)
+            
+            logger.info(f"Regex fallback extraction found zones: {zones_found}")
+            
+            # Create basic requirements for found zones
+            for zone in zones_found:
+                if zone and len(zone) < 50:
+                    try:
+                        req_id = self._insert_zone_requirements(
+                            job_id=job_id,
+                            town=town,
+                            county=county,
+                            state=state,
+                            zone_data={'zone': zone},
+                            extraction_confidence=0.3
+                        )
+                        if req_id:
+                            requirement_ids.append(req_id)
+                            logger.info(f"Created regex fallback requirement for zone {zone}")
+                    except Exception as e:
+                        logger.error(f"Error creating regex fallback requirement: {e}")
+            
+            return requirement_ids
+            
+        except Exception as e:
+            logger.error(f"Fallback extraction failed: {str(e)}")
             return requirement_ids
     
     def _insert_zone_requirements(self, job_id: str, town: str, county: str, state: str, 
@@ -173,7 +315,8 @@ class RequirementsProcessor:
             intensity = zone_data.get('development_intensity', {})
             
             # Call the Supabase function to insert requirement
-            result = self.client.rpc('insert_requirement', {
+            # Using renamed function to avoid overloading issues
+            result = self.client.rpc('insert_zoning_requirement', {
                 'p_job_id': job_id,
                 'p_town': town,
                 'p_county': county,

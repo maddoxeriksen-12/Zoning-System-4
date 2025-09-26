@@ -30,114 +30,102 @@ class GrokService:
             "Content-Type": "application/json"
         }
 
-    def process_zoning_document(self, text_content: str, municipality: str = None, state: str = "NJ", county: str = None) -> Dict[str, Any]:
+    def process_zoning_document(self, text_content: str, municipality: str = None, county: str = None, state: str = "NJ") -> Dict[str, Any]:
         """
         Process zoning document text using Grok AI
 
         Args:
             text_content: Extracted text from the document
-            municipality: Municipality name if available
+            municipality: Municipality name if available (fallback to AI extraction)
+            county: County name if available (fallback to AI extraction)
             state: State code (default: NJ)
-            county: County name if available
 
         Returns:
             Dict containing processed zoning information
         """
         try:
+            # If no municipality or county provided, we'll ask Grok to extract them
             location_info = ""
-            if municipality and county:
-                location_info = f" for {municipality}, {county}, {state}"
-            elif municipality:
-                location_info = f" for {municipality}, {state}"
-            else:
-                location_info = f" for {state}"
+            if municipality:
+                location_info += f" for {municipality}"
+            if county:
+                location_info += f", {county}"
+            location_info += f", {state}"
 
             prompt = f"""
-            You are an expert zoning and land use analyst. Analyze the following zoning document text{location_info} and extract SPECIFIC zoning requirements data.
+You are an expert zoning and land use analyst. Analyze the following zoning document text{location_info} and extract key information.
 
-            Document Text:
-            {text_content[:10000]}  # Limit text length for API
+Document Text:
+{text_content[:10000]}  # Limit text length for API
 
-            Please extract and provide the following information for EACH ZONING DISTRICT found in the document. 
-            Return your response as a JSON object with the following structure:
+IMPORTANT: First, identify the town/municipality and county from the document text. Look for phrases like "Town of [Name]", "City of [Name]", "Zoning Ordinance for [Place]", "[County] County", etc. If the location is not explicitly stated, infer from context (e.g., addresses, jurisdiction mentions).
 
-            {{
-                "zones": [
-                    {{
-                        "zone": "Zone name/code (e.g., R-1, C-2, etc.)",
-                        
-                        "interior_lots": {{
-                            "min_lot_area_sqft": numeric or null,
-                            "min_lot_frontage_ft": numeric or null,
-                            "min_lot_width_ft": numeric or null,
-                            "min_lot_depth_ft": numeric or null
-                        }},
-                        
-                        "corner_lots": {{
-                            "min_lot_area_sqft": numeric or null,
-                            "min_lot_frontage_ft": numeric or null,
-                            "min_lot_width_ft": numeric or null,
-                            "min_lot_depth_ft": numeric or null
-                        }},
-                        
-                        "lot_requirements": {{
-                            "min_circle_diameter_ft": numeric or null,
-                            "buildable_lot_area_sqft": numeric or null
-                        }},
-                        
-                        "principal_building_yards": {{
-                            "front_yard_ft": numeric or null,
-                            "side_yard_ft": numeric or null,
-                            "street_side_yard_ft": numeric or null,
-                            "rear_yard_ft": numeric or null,
-                            "street_rear_yard_ft": numeric or null
-                        }},
-                        
-                        "accessory_building_yards": {{
-                            "front_yard_ft": numeric or null,
-                            "side_yard_ft": numeric or null,
-                            "street_side_yard_ft": numeric or null,
-                            "rear_yard_ft": numeric or null,
-                            "street_rear_yard_ft": numeric or null
-                        }},
-                        
-                        "coverage_and_height": {{
-                            "max_building_coverage_percent": numeric or null,
-                            "max_lot_coverage_percent": numeric or null,
-                            "max_height_stories": numeric or null,
-                            "max_height_feet": numeric or null
-                        }},
-                        
-                        "floor_area": {{
-                            "min_gross_floor_area_first_floor_sqft": numeric or null,
-                            "min_gross_floor_area_multistory_sqft": numeric or null,
-                            "max_gross_floor_area_all_structures_sqft": numeric or null
-                        }},
-                        
-                        "development_intensity": {{
-                            "maximum_far": numeric or null,
-                            "maximum_density_units_per_acre": numeric or null
-                        }},
-                        
-                        "permitted_uses": ["list of permitted uses"],
-                        "special_provisions": "any special provisions or notes"
-                    }}
-                ],
-                "summary": "Brief summary of the zoning ordinance",
-                "extraction_confidence": 0.0 to 1.0 (your confidence in the extraction accuracy)
-            }}
+Then, provide a structured analysis including the following zoning requirements for EACH zoning district found. If a value is not explicitly stated, use null. Ensure all 40 fields are present for each zone.
 
-            IMPORTANT EXTRACTION RULES:
-            1. Extract NUMERIC values only - convert all measurements to the requested units
-            2. If a value is not found or not applicable, use null
-            3. Convert percentages to decimal form (e.g., 35% becomes 35)
-            4. If frontage and width are both mentioned, include both
-            5. Look for tables, schedules, or charts that contain these requirements
-            6. Extract data for ALL zones mentioned in the document
-            7. Be precise with zone names/codes as they appear in the document
+Extracted Location (include even if provided externally):
+- extracted_town: The municipality/town name found in the document (e.g., "Hoboken")
+- extracted_county: The county name found in the document (e.g., "Hudson County")
 
-            Return ONLY valid JSON, no additional text or explanation.
-            """
+For each zone, extract:
+- **Zone Name**: e.g., "R-1", "Commercial", "Industrial"
+- **Minimum Lot Size (Interior Lots)**:
+    - Area (square feet)
+    - Frontage (feet)
+    - Width (feet)
+    - Depth (feet)
+- **Minimum Lot Size (Corner Lots)**:
+    - Area (square feet)
+    - Frontage (feet)
+    - Width (feet)
+    - Depth (feet)
+- **Additional Lot Requirements**:
+    - Min. Circle Diameter (feet)
+    - Buildable Lot Area (square feet)
+- **Minimum Required Yard Areas (feet) - Principal Building**:
+    - Front
+    - Side
+    - Street Side
+    - Rear
+    - Street Rear
+- **Minimum Required Yard Areas (feet) - Accessory Building**:
+    - Front
+    - Side
+    - Street Side
+    - Rear
+    - Street Rear
+- **Coverage and Density Requirements**:
+    - Max. Building Coverage (%)
+    - Max. Lot Coverage (%)
+- **Height Restrictions - Principal Building**:
+    - Stories
+    - Feet (Total)
+- **Floor Area Requirements**:
+    - Total Minimum Gross Floor Area - First Floor (square feet)
+    - Total Minimum Gross Floor Area - Multistory (square feet)
+    - Max Gross Floor Area (all structures, square feet)
+- **Development Intensity**:
+    - Maximum FAR (Floor Area Ratio)
+    - Maximum Density (units per acre)
+
+Format your response as a JSON object with:
+- "extracted_town": string (municipality found in document)
+- "extracted_county": string (county found in document) 
+- "zoning_requirements": array of zone objects, each containing all 40 extracted fields
+
+Example:
+{{
+    "extracted_town": "Hoboken",
+    "extracted_county": "Hudson County",
+    "zoning_requirements": [
+        {{
+            "zone_name": "R-1",
+            "interior_min_lot_area_sqft": 10000,
+            "interior_min_lot_frontage_ft": 100,
+            // ... all 40 fields
+        }}
+    ]
+}}
+"""
 
             payload = {
                 "model": self.model,
