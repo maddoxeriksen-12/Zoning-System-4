@@ -1,0 +1,1 @@
+Test zoning document for requirements extraction. Zone R-1: Minimum lot area 10,000 sqft, front yard 30 ft, side yard 10 ft, max height 35 ft. Zone C-2: Minimum lot area 5,000 sqft, front yard 20 ft, max FAR 2.0.
