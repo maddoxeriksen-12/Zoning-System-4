@@ -264,7 +264,7 @@ docker-compose logs backend --tail=20
 
 - **GitHub Issues**: [Report bugs](https://github.com/maddoxeriksen-12/Zoning-System-4/issues)
 - **Discussions**: [Ask questions](https://github.com/maddoxeriksen-12/Zoning-System-4/discussions)
-
+ 
 ---
 
 **Built for municipal planning automation with a focus on accuracy, reliability, and scalability.**
