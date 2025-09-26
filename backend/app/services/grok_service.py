@@ -53,78 +53,79 @@ class GrokService:
             location_info += f", {state}"
 
             prompt = f"""
-You are an expert zoning and land use analyst. Analyze the following zoning document text{location_info} and extract key information.
+You are an expert zoning analyst. Extract ALL zoning requirements with MAXIMUM PRECISION.
 
 Document Text:
-{text_content[:10000]}  # Limit text length for API
+{text_content[:10000]}
 
-IMPORTANT: First, identify the town/municipality and county from the document text. Look for phrases like "Town of [Name]", "City of [Name]", "Zoning Ordinance for [Place]", "[County] County", etc. If the location is not explicitly stated, infer from context (e.g., addresses, jurisdiction mentions).
+CRITICAL EXTRACTION TARGETS (Currently missing - FOCUS HERE):
+🏗️ HEIGHT: "maximum height", "building height", "height limit", "stories" → EXACT numbers
+📐 COVERAGE: "lot coverage", "building coverage", "impervious coverage" → EXACT percentages  
+📊 FAR: "FAR", "floor area ratio", "density" → EXACT decimal numbers
 
-Then, provide a structured analysis including the following zoning requirements for EACH zoning district found. If a value is not explicitly stated, use null. Ensure all 40 fields are present for each zone.
+STEP 1 - LOCATION:
+Find: {municipality if municipality else 'SEARCH_DOCUMENT'}, {county if county else 'SEARCH_DOCUMENT'}, {state}
 
-Extracted Location (include even if provided externally):
-- extracted_town: The municipality/town name found in the document (e.g., "Hoboken")
-- extracted_county: The county name found in the document (e.g., "Hudson County")
+STEP 2 - ZONES:
+Find ALL districts: R-1, R-2, C-1, C-2, I-1, etc. (look in tables, headings, schedules)
 
-For each zone, extract:
-- **Zone Name**: e.g., "R-1", "Commercial", "Industrial"
-- **Minimum Lot Size (Interior Lots)**:
-    - Area (square feet)
-    - Frontage (feet)
-    - Width (feet)
-    - Depth (feet)
-- **Minimum Lot Size (Corner Lots)**:
-    - Area (square feet)
-    - Frontage (feet)
-    - Width (feet)
-    - Depth (feet)
-- **Additional Lot Requirements**:
-    - Min. Circle Diameter (feet)
-    - Buildable Lot Area (square feet)
-- **Minimum Required Yard Areas (feet) - Principal Building**:
-    - Front
-    - Side
-    - Street Side
-    - Rear
-    - Street Rear
-- **Minimum Required Yard Areas (feet) - Accessory Building**:
-    - Front
-    - Side
-    - Street Side
-    - Rear
-    - Street Rear
-- **Coverage and Density Requirements**:
-    - Max. Building Coverage (%)
-    - Max. Lot Coverage (%)
-- **Height Restrictions - Principal Building**:
-    - Stories
-    - Feet (Total)
-- **Floor Area Requirements**:
-    - Total Minimum Gross Floor Area - First Floor (square feet)
-    - Total Minimum Gross Floor Area - Multistory (square feet)
-    - Max Gross Floor Area (all structures, square feet)
-- **Development Intensity**:
-    - Maximum FAR (Floor Area Ratio)
-    - Maximum Density (units per acre)
+STEP 3 - REQUIREMENTS (Extract EXACT numbers):
 
-Format your response as a JSON object with:
-- "extracted_town": string (municipality found in document)
-- "extracted_county": string (county found in document) 
-- "zoning_requirements": array of zone objects, each containing all 40 extracted fields
+✅ LOT (working well):
+- interior_min_lot_area_sqft: "lot area" → number (remove commas)
+- interior_min_lot_frontage_ft: "frontage" → number
 
-Example:
+✅ SETBACKS (working well):
+- principal_min_front_yard_ft: "front yard/setback" → number
+- principal_min_side_yard_ft: "side yard/setback" → number  
+- principal_min_rear_yard_ft: "rear yard/setback" → number
+
+❌ HEIGHT (0% success - FIX THIS):
+- principal_max_height_feet: "height", "maximum height", "building height" → EXACT feet
+- principal_max_height_stories: "stories", "floors" → decimal (2.5 for "2½")
+SEARCH: height sections, building codes, dimensional tables, "H=" in tables
+
+❌ COVERAGE (CRITICAL - LOOK EVERYWHERE):
+- max_building_coverage_percent: "building coverage", "structure coverage", "footprint coverage" → number (remove %)
+- max_lot_coverage_percent: "lot coverage", "impervious coverage", "total coverage", "site coverage" → number (remove %)
+SEARCH LOCATIONS: coverage sections, density rules, environmental regulations, "coverage" tables, building regulations, dimensional charts, development standards
+COMMON PHRASES: "coverage shall not exceed", "maximum coverage", "coverage ratio", "coverage percentage", "impervious surface"
+
+❌ FAR/DENSITY (0% success - FIX THIS):
+- maximum_far: "FAR", "floor area ratio" → decimal (1.5, 2.0)
+- maximum_density_units_per_acre: "density", "units per acre" → number
+SEARCH: commercial zones, mixed-use areas, density bonuses, "FAR=" in tables
+
+EXTRACTION EXAMPLES:
+"Zone R-1: 8,000 sq ft, 25 ft setback, 30 ft height, 30% coverage"
+→ {{"zone_name": "R-1", "interior_min_lot_area_sqft": 8000, "principal_min_front_yard_ft": 25, "principal_max_height_feet": 30, "max_lot_coverage_percent": 30}}
+
+"Commercial C-1: FAR 2.0, height 45 feet, building coverage 60%"  
+→ {{"zone_name": "C-1", "maximum_far": 2.0, "principal_max_height_feet": 45, "max_building_coverage_percent": 60}}
+
+JSON OUTPUT:
 {{
-    "extracted_town": "Hoboken",
-    "extracted_county": "Hudson County",
-    "zoning_requirements": [
-        {{
-            "zone_name": "R-1",
-            "interior_min_lot_area_sqft": 10000,
-            "interior_min_lot_frontage_ft": 100,
-            // ... all 40 fields
-        }}
-    ]
+  "extracted_town": "{municipality or 'EXTRACT_FROM_DOCUMENT'}",
+  "extracted_county": "{county or 'EXTRACT_FROM_DOCUMENT'}",
+  "zoning_requirements": [
+    {{
+      "zone_name": "R-1",
+      "interior_min_lot_area_sqft": 8000,
+      "interior_min_lot_frontage_ft": 75,
+      "principal_min_front_yard_ft": 25,
+      "principal_min_side_yard_ft": 10,
+      "principal_min_rear_yard_ft": 30,
+      "principal_max_height_feet": 30,
+      "principal_max_height_stories": 2.5,
+      "max_building_coverage_percent": 30,
+      "max_lot_coverage_percent": 40,
+      "maximum_far": 1.5,
+      "maximum_density_units_per_acre": null
+    }}
+  ]
 }}
+
+PAY SPECIAL ATTENTION TO HEIGHT, COVERAGE, AND FAR EXTRACTION.
 """
 
             payload = {
